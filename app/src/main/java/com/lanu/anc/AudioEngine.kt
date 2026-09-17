@@ -14,6 +14,7 @@ import android.os.Build
 
 class AudioEngine(private val context: Context) {
     enum class State { IDLE, STARTING, RUNNING, STOPPING, ERROR }
+    enum class Backend { NONE, NATIVE_AAUDIO, KOTLIN_AUDIO_RECORD }
 
     companion object {
         const val SAMPLE_RATE = 48_000
@@ -23,8 +24,14 @@ class AudioEngine(private val context: Context) {
     @Volatile var state: State = State.IDLE
         private set
 
+    @Volatile var backend: Backend = Backend.NONE
+        private set
+
     val running: Boolean
         get() = state == State.RUNNING
+
+    val nativeBackendAvailable: Boolean
+        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && NativeAudioEngine.isAvailable()
 
     @Volatile var inputDbFs: Float = -120f
         private set
@@ -54,6 +61,7 @@ class AudioEngine(private val context: Context) {
         if (state == State.RUNNING || state == State.STARTING) return true
         if (state == State.STOPPING) return false
         state = State.STARTING
+        backend = Backend.NONE
         lastError = null
 
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -73,60 +81,14 @@ class AudioEngine(private val context: Context) {
                 throw IllegalStateException("Ses iletişim cihazı seçilemedi.")
             }
 
-            val minRecord = AudioRecord.getMinBufferSize(
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            )
-            require(minRecord > 0) { "Mikrofon buffer boyutu alınamadı." }
-            val recordBuffer = (minRecord.coerceAtLeast(1024) * 2)
+            routeName = selectedDevice.productName?.toString()?.ifBlank { null } ?: "Harici kulaklık"
 
-            record = createRecorder(recordBuffer)
-            val sessionId = record!!.audioSessionId
-            noiseSuppressor = if (android.media.audiofx.NoiseSuppressor.isAvailable()) android.media.audiofx.NoiseSuppressor.create(sessionId) else null
-            echoCanceler = if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) android.media.audiofx.AcousticEchoCanceler.create(sessionId) else null
-            agc = if (android.media.audiofx.AutomaticGainControl.isAvailable()) android.media.audiofx.AutomaticGainControl.create(sessionId) else null
-            noiseSuppressor?.enabled = true
-            echoCanceler?.enabled = true
-            agc?.enabled = true
-            noiseSuppressorActive = noiseSuppressor?.enabled == true
-            echoCancelerActive = echoCanceler?.enabled == true
-            agcActive = agc?.enabled == true
-
-            val minTrack = AudioTrack.getMinBufferSize(
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            )
-            require(minTrack > 0) { "Ses çıkışı buffer boyutu alınamadı." }
-            val trackBuffer = (minTrack.coerceAtLeast(1024) * 2)
-            track = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setSampleRate(SAMPLE_RATE)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setBufferSizeInBytes(trackBuffer)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                track?.preferredDevice = selectedDevice
-                record?.preferredDevice = selectedDevice
+            if (tryStartNativeBackend()) {
+                state = State.RUNNING
+                return true
             }
 
-            record!!.startRecording()
-            check(record!!.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Mikrofon kayıt başlatılamadı." }
-            track!!.play()
-            routeName = selectedDevice.productName?.toString()?.ifBlank { null } ?: "Harici kulaklık"
+            startKotlinBackend(selectedDevice)
             state = State.RUNNING
             worker = Thread(::audioLoop, "LANU-AudioEngine").also { it.start() }
             true
@@ -159,13 +121,91 @@ class AudioEngine(private val context: Context) {
         }
     }
 
+    private fun tryStartNativeBackend(): Boolean {
+        if (!nativeBackendAvailable) return false
+        return try {
+            val started = NativeAudioEngine.start()
+            if (started && NativeAudioEngine.isRunning()) {
+                backend = Backend.NATIVE_AAUDIO
+                true
+            } else {
+                NativeAudioEngine.stop()
+                false
+            }
+        } catch (_: Throwable) {
+            try { NativeAudioEngine.stop() } catch (_: Throwable) { }
+            false
+        }
+    }
+
+    private fun startKotlinBackend(selectedDevice: AudioDeviceInfo) {
+        val minRecord = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        require(minRecord > 0) { "Mikrofon buffer boyutu alınamadı." }
+        val recordBuffer = (minRecord.coerceAtLeast(1024) * 2)
+
+        record = createRecorder(recordBuffer)
+        val sessionId = record!!.audioSessionId
+        noiseSuppressor = if (android.media.audiofx.NoiseSuppressor.isAvailable()) android.media.audiofx.NoiseSuppressor.create(sessionId) else null
+        echoCanceler = if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) android.media.audiofx.AcousticEchoCanceler.create(sessionId) else null
+        agc = if (android.media.audiofx.AutomaticGainControl.isAvailable()) android.media.audiofx.AutomaticGainControl.create(sessionId) else null
+        noiseSuppressor?.enabled = true
+        echoCanceler?.enabled = true
+        agc?.enabled = true
+        noiseSuppressorActive = noiseSuppressor?.enabled == true
+        echoCancelerActive = echoCanceler?.enabled == true
+        agcActive = agc?.enabled == true
+
+        val minTrack = AudioTrack.getMinBufferSize(
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        require(minTrack > 0) { "Ses çıkışı buffer boyutu alınamadı." }
+        val trackBuffer = (minTrack.coerceAtLeast(1024) * 2)
+        track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(SAMPLE_RATE)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(trackBuffer)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            track?.preferredDevice = selectedDevice
+            record?.preferredDevice = selectedDevice
+        }
+
+        record!!.startRecording()
+        check(record!!.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Mikrofon kayıt başlatılamadı." }
+        track!!.play()
+        backend = Backend.KOTLIN_AUDIO_RECORD
+    }
+
     private fun runningSignalStop() {
+        if (backend == Backend.NATIVE_AAUDIO) {
+            try { NativeAudioEngine.stop() } catch (_: Throwable) { }
+        }
         record?.let { try { it.stop() } catch (_: Throwable) { } }
         track?.let { try { it.pause() } catch (_: Throwable) { } }
         worker?.interrupt()
     }
 
     private fun cleanupAudioResources() {
+        try { if (backend == Backend.NATIVE_AAUDIO) NativeAudioEngine.stop() } catch (_: Throwable) { }
         worker = null
         try { record?.release() } catch (_: Throwable) { }
         try { track?.release() } catch (_: Throwable) { }
@@ -184,6 +224,7 @@ class AudioEngine(private val context: Context) {
         echoCancelerActive = false
         agcActive = false
         routeName = "-"
+        backend = Backend.NONE
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try { audioManager.clearCommunicationDevice() } catch (_: Throwable) { }
