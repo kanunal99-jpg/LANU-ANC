@@ -33,6 +33,9 @@ class AudioEngine(private val context: Context) {
     val nativeBackendAvailable: Boolean
         get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && NativeAudioEngine.isAvailable()
 
+    /** Hardware/OS gate used before enabling any future true-ANC path. */
+    val ancCapabilities: AncCapabilities by lazy { AncCapabilities.detect(context) }
+
     @Volatile var inputDbFs: Float = -120f
         private set
     @Volatile var routeName: String = "-"
