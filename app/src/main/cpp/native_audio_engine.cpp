@@ -30,17 +30,23 @@ struct Ring {
     }
 };
 
-struct Engine { AAudioStream* input{}; AAudioStream* output{}; Ring ring; std::atomic<bool> running{false}; };
+struct Engine {
+    AAudioStream* input{};
+    AAudioStream* output{};
+    Ring ring;
+    std::atomic<bool> running{false};
+};
+
 Engine g;
 
-AAudioStream_dataCallbackResult inputCb(AAudioStream*, void* user, void* data, int32_t frames) {
+aaudio_data_callback_result_t inputCb(AAudioStream*, void* user, void* data, int32_t frames) {
     auto* e = static_cast<Engine*>(user);
     if (!e->running.load(std::memory_order_relaxed)) return AAUDIO_CALLBACK_RESULT_STOP;
     e->ring.push(static_cast<const int16_t*>(data), static_cast<uint32_t>(frames));
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 
-AAudioStream_dataCallbackResult outputCb(AAudioStream*, void* user, void* data, int32_t frames) {
+aaudio_data_callback_result_t outputCb(AAudioStream*, void* user, void* data, int32_t frames) {
     auto* e = static_cast<Engine*>(user);
     auto* out = static_cast<int16_t*>(data);
     const uint32_t requested = static_cast<uint32_t>(frames);
@@ -64,12 +70,12 @@ bool openStreams() {
         if (out) AAudioStreamBuilder_delete(out);
         return false;
     }
+
     AAudioStreamBuilder_setDirection(in, AAUDIO_DIRECTION_INPUT);
     AAudioStreamBuilder_setSampleRate(in, kSampleRate);
     AAudioStreamBuilder_setChannelCount(in, kChannels);
     AAudioStreamBuilder_setFormat(in, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setPerformanceMode(in, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
-    AAudioStreamBuilder_setInputPreset(in, AAUDIO_INPUT_PRESET_VOICE_PERFORMANCE);
     AAudioStreamBuilder_setDataCallback(in, inputCb, &g);
 
     AAudioStreamBuilder_setDirection(out, AAUDIO_DIRECTION_OUTPUT);
@@ -83,7 +89,11 @@ bool openStreams() {
     const auto outResult = AAudioStreamBuilder_openStream(out, &g.output);
     AAudioStreamBuilder_delete(in);
     AAudioStreamBuilder_delete(out);
-    if (inResult != AAUDIO_OK || outResult != AAUDIO_OK) { closeStream(g.input); closeStream(g.output); return false; }
+    if (inResult != AAUDIO_OK || outResult != AAUDIO_OK) {
+        closeStream(g.input);
+        closeStream(g.output);
+        return false;
+    }
     return true;
 }
 }
@@ -95,7 +105,8 @@ Java_com_lanu_anc_NativeAudioEngine_lanuNativeStart(JNIEnv*, jobject) {
     g.running.store(true, std::memory_order_release);
     if (AAudioStream_requestStart(g.input) != AAUDIO_OK || AAudioStream_requestStart(g.output) != AAUDIO_OK) {
         g.running.store(false, std::memory_order_release);
-        closeStream(g.input); closeStream(g.output);
+        closeStream(g.input);
+        closeStream(g.output);
         return JNI_FALSE;
     }
     return JNI_TRUE;
@@ -104,7 +115,8 @@ Java_com_lanu_anc_NativeAudioEngine_lanuNativeStart(JNIEnv*, jobject) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_lanu_anc_NativeAudioEngine_lanuNativeStop(JNIEnv*, jobject) {
     g.running.store(false, std::memory_order_release);
-    closeStream(g.input); closeStream(g.output);
+    closeStream(g.input);
+    closeStream(g.output);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
