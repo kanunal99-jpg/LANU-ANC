@@ -19,7 +19,12 @@ object NativeAudioEngine {
 
     fun isAvailable(): Boolean = loaded
 
-    fun start(deviceId: Int): Boolean = loaded && lanuNativeStart(deviceId)
+    /** Start a duplex stream with independently requested input/output routes. */
+    fun start(inputDeviceId: Int, outputDeviceId: Int): Boolean =
+        loaded && lanuNativeStart(inputDeviceId, outputDeviceId)
+
+    /** Backward-compatible convenience for a single route ID. */
+    fun start(deviceId: Int): Boolean = start(deviceId, deviceId)
 
     fun stop() {
         if (loaded) lanuNativeStop()
@@ -34,7 +39,7 @@ object NativeAudioEngine {
     fun inputDeviceId(): Int = if (loaded) lanuNativeInputDeviceId() else 0
     fun outputDeviceId(): Int = if (loaded) lanuNativeOutputDeviceId() else 0
 
-    private external fun lanuNativeStart(deviceId: Int): Boolean
+    private external fun lanuNativeStart(inputDeviceId: Int, outputDeviceId: Int): Boolean
     private external fun lanuNativeStop()
     private external fun lanuNativeIsRunning(): Boolean
     private external fun lanuNativeSampleRate(): Int
