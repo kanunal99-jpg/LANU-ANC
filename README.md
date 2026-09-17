@@ -50,3 +50,6 @@ Do not label software noise suppression as hardware ANC. Product copy, code comm
 
 ## Build gate
 A release is not considered produced until GitHub Actions completes the Android debug build, unit tests, SHA-256 generation and APK artifact upload successfully.
+
+## Verification branch
+The final APK build is being verified from the current main revision before any downloadable release is declared.
