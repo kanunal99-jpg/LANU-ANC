@@ -78,9 +78,6 @@ bool openStreams(int32_t deviceId) {
     AAudioStreamBuilder_setFormat(in, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setPerformanceMode(in, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setDeviceId(in, deviceId);
-    if (AAudioStreamBuilder_setInputPreset) {
-        AAudioStreamBuilder_setInputPreset(in, AAUDIO_INPUT_PRESET_VOICE_PERFORMANCE);
-    }
     AAudioStreamBuilder_setDataCallback(in, inputCb, &g);
 
     AAudioStreamBuilder_setDirection(out, AAUDIO_DIRECTION_OUTPUT);
