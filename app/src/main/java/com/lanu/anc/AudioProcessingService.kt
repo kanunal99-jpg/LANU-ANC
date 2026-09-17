@@ -20,6 +20,7 @@ class AudioProcessingService : Service() {
 
     private val binder = LocalBinder()
     private lateinit var engine: AudioEngine
+    @Volatile private var calibrationOutcome: HardwareCalibrationSession.Outcome? = null
 
     inner class LocalBinder : Binder() {
         fun service(): AudioProcessingService = this@AudioProcessingService
@@ -43,8 +44,6 @@ class AudioProcessingService : Service() {
     }
 
     fun startProcessing(): Boolean {
-        // The activity initiates this service while visible and after RECORD_AUDIO permission.
-        // This is required by current Android microphone foreground-service rules.
         startForegroundCompat(buildNotification("Başlatılıyor…"))
         val started = engine.start()
         updateNotification()
@@ -54,13 +53,31 @@ class AudioProcessingService : Service() {
     fun stopProcessing() {
         engine.stop()
         updateNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
+        else {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
     }
+
+    /** Runs a real-device calibration. Call from a background thread. */
+    fun calibrateHardware(): HardwareCalibrationSession.Outcome {
+        startForegroundCompat(buildNotification("Gerçek cihaz kalibrasyonu hazırlanıyor…"))
+        engine.stop()
+        val outcome = HardwareCalibrationSession(this).run()
+        calibrationOutcome = outcome
+        updateNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
+        else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        return outcome
+    }
+
+    fun calibrationState(): AncCalibrationSession.State = calibrationOutcome?.state ?: AncCalibrationSession.State.IDLE
+    fun calibrationResult(): AncCalibrationSession.Result? = calibrationOutcome?.result
+    fun calibrationError(): String? = calibrationOutcome?.error
 
     fun isRunning(): Boolean = engine.running
     fun inputDbFs(): Float = engine.inputDbFs
@@ -82,11 +99,7 @@ class AudioProcessingService : Service() {
 
     private fun startForegroundCompat(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            )
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
             @Suppress("DEPRECATION")
             startForeground(NOTIFICATION_ID, notification)
@@ -101,18 +114,18 @@ class AudioProcessingService : Service() {
             AudioEngine.Backend.NONE -> "Hazır"
         }
         val text = when {
+            calibrationOutcome?.state == AncCalibrationSession.State.VALIDATED -> "Kalibrasyon doğrulandı • ölçüm gerçek cihazdan"
+            calibrationOutcome?.state == AncCalibrationSession.State.FAILED -> "Kalibrasyon başarısız • ANC bypass"
             engine.running -> "Çalışıyor • $backendText • ${engine.routeName}"
             engine.lastError != null -> "Hata: ${engine.lastError}"
             else -> "Hazır"
         }
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(text))
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(text))
     }
 
     private fun buildNotification(text: String): Notification {
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL_ID)
+        else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }
@@ -128,11 +141,7 @@ class AudioProcessingService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "LANU ANC ses motoru",
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
+        val channel = NotificationChannel(CHANNEL_ID, "LANU ANC ses motoru", NotificationManager.IMPORTANCE_LOW).apply {
             description = "LANU ANC mikrofon gürültü azaltma motoru"
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
