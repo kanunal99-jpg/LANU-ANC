@@ -49,10 +49,12 @@ class AncProcessingTopology(
         }
 
         val model = validation.secondaryPathModel!!
+        val tapCount = minOf(fxLmsTaps, model.coefficients.size)
+        val measuredPath = model.coefficients.copyOf(tapCount)
         fxLms = runCatching {
             FxLmsAncCore(
-                taps = minOf(fxLmsTaps, model.coefficients.size.coerceAtLeast(1)),
-                secondaryPathTaps = model.coefficients.copyOf(),
+                taps = tapCount,
+                secondaryPathTaps = measuredPath,
                 learningRate = fxLmsLearningRate,
                 maxCoefficient = fxLmsMaxCoefficient
             )
