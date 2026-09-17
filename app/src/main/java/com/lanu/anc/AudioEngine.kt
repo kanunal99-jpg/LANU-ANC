@@ -13,12 +13,19 @@ import android.media.MediaRecorder
 import android.os.Build
 
 class AudioEngine(private val context: Context) {
+    enum class State { IDLE, STARTING, RUNNING, STOPPING, ERROR }
+
     companion object {
         const val SAMPLE_RATE = 48_000
+        private const val STOP_JOIN_TIMEOUT_MS = 1500L
     }
 
-    @Volatile var running: Boolean = false
+    @Volatile var state: State = State.IDLE
         private set
+
+    val running: Boolean
+        get() = state == State.RUNNING
+
     @Volatile var inputDbFs: Float = -120f
         private set
     @Volatile var routeName: String = "-"
@@ -40,27 +47,30 @@ class AudioEngine(private val context: Context) {
     private var agc: android.media.audiofx.AutomaticGainControl? = null
     private var worker: Thread? = null
     private var communicationDevice: AudioDeviceInfo? = null
+    private val lifecycleLock = Any()
+    private var previousAudioMode = AudioManager.MODE_NORMAL
 
-    fun start(): Boolean {
-        if (running) return true
+    fun start(): Boolean = synchronized(lifecycleLock) {
+        if (state == State.RUNNING || state == State.STARTING) return true
+        if (state == State.STOPPING) return false
+        state = State.STARTING
         lastError = null
 
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             lastError = "Mikrofon izni verilmedi."
+            state = State.ERROR
             return false
         }
 
-        return try {
+        try {
+            previousAudioMode = audioManager.mode
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             communicationDevice = chooseExternalDevice()
             val selectedDevice = communicationDevice
-            if (selectedDevice == null) {
-                throw IllegalStateException("Harici kulaklık bulunamadı. Güvenli kullanım için kablolu/Bluetooth/USB kulaklık bağlayın.")
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (!audioManager.setCommunicationDevice(selectedDevice)) {
-                    throw IllegalStateException("Ses iletişim cihazı seçilemedi.")
-                }
+                ?: throw IllegalStateException("Harici kulaklık bulunamadı. Güvenli kullanım için kablolu/Bluetooth/USB kulaklık bağlayın.")
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !audioManager.setCommunicationDevice(selectedDevice)) {
+                throw IllegalStateException("Ses iletişim cihazı seçilemedi.")
             }
 
             val minRecord = AudioRecord.getMinBufferSize(
@@ -68,6 +78,7 @@ class AudioEngine(private val context: Context) {
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
+            require(minRecord > 0) { "Mikrofon buffer boyutu alınamadı." }
             val recordBuffer = (minRecord.coerceAtLeast(1024) * 2)
 
             record = createRecorder(recordBuffer)
@@ -87,6 +98,7 @@ class AudioEngine(private val context: Context) {
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
+            require(minTrack > 0) { "Ses çıkışı buffer boyutu alınamadı." }
             val trackBuffer = (minTrack.coerceAtLeast(1024) * 2)
             track = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -112,37 +124,61 @@ class AudioEngine(private val context: Context) {
             }
 
             record!!.startRecording()
+            check(record!!.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Mikrofon kayıt başlatılamadı." }
             track!!.play()
             routeName = selectedDevice.productName?.toString()?.ifBlank { null } ?: "Harici kulaklık"
-            running = true
+            state = State.RUNNING
             worker = Thread(::audioLoop, "LANU-AudioEngine").also { it.start() }
             true
         } catch (t: Throwable) {
             lastError = t.message ?: t.javaClass.simpleName
-            stop()
+            state = State.ERROR
+            cleanupAudioResources()
             false
         }
     }
 
     fun stop() {
-        running = false
+        val threadToJoin: Thread?
+        synchronized(lifecycleLock) {
+            if (state == State.IDLE) return
+            state = State.STOPPING
+            threadToJoin = worker
+            runningSignalStop()
+        }
+
+        if (threadToJoin != null && threadToJoin !== Thread.currentThread()) {
+            try { threadToJoin.join(STOP_JOIN_TIMEOUT_MS) } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+
+        synchronized(lifecycleLock) {
+            cleanupAudioResources()
+            state = State.IDLE
+        }
+    }
+
+    private fun runningSignalStop() {
+        record?.let { try { it.stop() } catch (_: Throwable) { } }
+        track?.let { try { it.pause() } catch (_: Throwable) { } }
         worker?.interrupt()
+    }
+
+    private fun cleanupAudioResources() {
         worker = null
-
-        try { record?.stop() } catch (_: Throwable) { }
-        try { track?.stop() } catch (_: Throwable) { }
-
-        record?.release()
-        track?.release()
-        noiseSuppressor?.release()
-        echoCanceler?.release()
-        agc?.release()
+        try { record?.release() } catch (_: Throwable) { }
+        try { track?.release() } catch (_: Throwable) { }
+        try { noiseSuppressor?.release() } catch (_: Throwable) { }
+        try { echoCanceler?.release() } catch (_: Throwable) { }
+        try { agc?.release() } catch (_: Throwable) { }
 
         record = null
         track = null
         noiseSuppressor = null
         echoCanceler = null
         agc = null
+        communicationDevice = null
         inputDbFs = -120f
         noiseSuppressorActive = false
         echoCancelerActive = false
@@ -152,7 +188,7 @@ class AudioEngine(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try { audioManager.clearCommunicationDevice() } catch (_: Throwable) { }
         }
-        audioManager.mode = AudioManager.MODE_NORMAL
+        try { audioManager.mode = previousAudioMode } catch (_: Throwable) { }
     }
 
     private fun createRecorder(bufferSize: Int): AudioRecord {
@@ -208,31 +244,39 @@ class AudioEngine(private val context: Context) {
         val localRecord = record ?: return
         val localTrack = track ?: return
         val buffer = ShortArray(2048)
-        while (running && !Thread.currentThread().isInterrupted) {
-            val read = try {
-                localRecord.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
-            } catch (t: Throwable) {
-                lastError = "Mikrofon okuma hatası: ${t.message ?: t.javaClass.simpleName}"
-                break
-            }
-            if (read <= 0) continue
-            inputDbFs = AudioMath.rmsDbFs(buffer, read)
-            try {
+        try {
+            while (state == State.RUNNING && !Thread.currentThread().isInterrupted) {
+                val read = try {
+                    localRecord.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                } catch (t: Throwable) {
+                    lastError = "Mikrofon okuma hatası: ${t.message ?: t.javaClass.simpleName}"
+                    state = State.ERROR
+                    break
+                }
+                if (read <= 0) continue
+                inputDbFs = AudioMath.rmsDbFs(buffer, read)
                 var offset = 0
-                while (offset < read && running) {
-                    val written = localTrack.write(buffer, offset, read - offset, AudioTrack.WRITE_BLOCKING)
+                while (offset < read && state == State.RUNNING) {
+                    val written = try {
+                        localTrack.write(buffer, offset, read - offset, AudioTrack.WRITE_BLOCKING)
+                    } catch (t: Throwable) {
+                        lastError = "Ses çıkışı hatası: ${t.message ?: t.javaClass.simpleName}"
+                        state = State.ERROR
+                        break
+                    }
                     if (written <= 0) {
                         lastError = "Ses çıkışı yazılamadı: $written"
-                        running = false
+                        state = State.ERROR
                         break
                     }
                     offset += written
                 }
-            } catch (t: Throwable) {
-                lastError = "Ses çıkışı hatası: ${t.message ?: t.javaClass.simpleName}"
-                break
+            }
+        } finally {
+            if (state == State.ERROR) {
+                try { localRecord.stop() } catch (_: Throwable) { }
+                try { localTrack.pause() } catch (_: Throwable) { }
             }
         }
-        running = false
     }
 }
