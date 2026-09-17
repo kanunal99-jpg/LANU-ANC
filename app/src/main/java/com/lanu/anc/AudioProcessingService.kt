@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -42,7 +43,9 @@ class AudioProcessingService : Service() {
     }
 
     fun startProcessing(): Boolean {
-        startForeground(NOTIFICATION_ID, buildNotification("Başlatılıyor…"))
+        // The activity initiates this service while visible and after RECORD_AUDIO permission.
+        // This is required by current Android microphone foreground-service rules.
+        startForegroundCompat(buildNotification("Başlatılıyor…"))
         val started = engine.start()
         updateNotification()
         return started
@@ -66,12 +69,26 @@ class AudioProcessingService : Service() {
     fun aecActive(): Boolean = engine.echoCancelerActive
     fun agcActive(): Boolean = engine.agcActive
     fun error(): String? = engine.lastError
+    fun state(): AudioEngine.State = engine.state
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onBind(intent: Intent): IBinder = binder
 
     override fun onDestroy() {
         engine.stop()
         super.onDestroy()
+    }
+
+    private fun startForegroundCompat(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun updateNotification() {
