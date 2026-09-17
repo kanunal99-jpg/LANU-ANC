@@ -47,3 +47,6 @@ All claims about noise reduction, speech quality, latency, CPU, memory and batte
 
 ## Engineering rule
 Do not label software noise suppression as hardware ANC. Product copy, code comments, tests and documentation must preserve this distinction.
+
+## Build gate
+A release is not considered produced until GitHub Actions completes the Android debug build, unit tests, SHA-256 generation and APK artifact upload successfully.
