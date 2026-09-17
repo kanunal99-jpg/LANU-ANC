@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.os.Build
 
 /** Real-device secondary-path measurement. The response always comes from AudioRecord. */
 class HardwareCalibrationController(private val context: Context) {
@@ -55,6 +56,8 @@ class HardwareCalibrationController(private val context: Context) {
             record.preferredDevice = input
             track.preferredDevice = output
 
+            if (!routeMatches(record, input, track, output)) return null
+
             val excitation = FloatArray(EXCITATION_FRAMES)
             val excitationPcm = ShortArray(EXCITATION_FRAMES)
             buildExcitation(excitation, excitationPcm)
@@ -63,6 +66,7 @@ class HardwareCalibrationController(private val context: Context) {
             record.startRecording()
             track.play()
             if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING || track.playState != AudioTrack.PLAYSTATE_PLAYING) return null
+            if (!routeMatches(record, input, track, output)) return null
 
             val writer = Thread {
                 var offset = 0
@@ -81,10 +85,14 @@ class HardwareCalibrationController(private val context: Context) {
                 captured += read
             }
             writer.join(2500)
-            if (captured < EXCITATION_FRAMES) return null
+
+            // The tail is required to observe real route latency. Do not accept a
+            // partial capture that could falsely look like a valid low-latency path.
+            if (captured < responsePcm.size) return null
 
             // The estimator requires equal-length excitation/response windows.
-            // Capture includes a tail so route latency can be observed, then retain the aligned window.
+            // Keep the beginning of the measured response; the estimator searches
+            // the configured latency range using normalized cross-correlation.
             val response = FloatArray(EXCITATION_FRAMES)
             for (i in response.indices) response[i] = responsePcm[i] / 32768f
             return Measurement(route, excitation, response)
@@ -94,6 +102,18 @@ class HardwareCalibrationController(private val context: Context) {
             record.release()
             track.release()
         }
+    }
+
+    private fun routeMatches(
+        record: AudioRecord,
+        expectedInput: AudioDeviceInfo,
+        track: AudioTrack,
+        expectedOutput: AudioDeviceInfo
+    ): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return true
+        val actualInput = record.routedDevice
+        val actualOutput = track.routedDevice
+        return actualInput?.id == expectedInput.id && actualOutput?.id == expectedOutput.id
     }
 
     private fun findDevice(manager: AudioManager, input: Boolean): AudioDeviceInfo? {
