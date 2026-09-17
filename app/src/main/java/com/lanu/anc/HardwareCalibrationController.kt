@@ -81,10 +81,12 @@ class HardwareCalibrationController(private val context: Context) {
                 captured += read
             }
             writer.join(2500)
-            if (captured < EXCITATION_FRAMES / 2) return null
+            if (captured < EXCITATION_FRAMES) return null
 
-            val response = FloatArray(captured)
-            for (i in 0 until captured) response[i] = responsePcm[i] / 32768f
+            // The estimator requires equal-length excitation/response windows.
+            // Capture includes a tail so route latency can be observed, then retain the aligned window.
+            val response = FloatArray(EXCITATION_FRAMES)
+            for (i in response.indices) response[i] = responsePcm[i] / 32768f
             return Measurement(route, excitation, response)
         } finally {
             runCatching { record.stop() }
