@@ -12,10 +12,13 @@ import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.os.Build
 
-/** Real-device secondary-path measurement. The response always comes from AudioRecord. */
+/** Real-device secondary-path measurement using a physical two-channel input. */
 class HardwareCalibrationController(private val context: Context) {
     companion object {
         const val SAMPLE_RATE = 48_000
+        const val INPUT_CHANNELS = 2
+        const val REFERENCE_CHANNEL = 0
+        const val ERROR_CHANNEL = 1
         private const val EXCITATION_FRAMES = 48_000
         private const val TAIL_FRAMES = 24_000
         private const val BUFFER_FRAMES = 2048
@@ -24,7 +27,9 @@ class HardwareCalibrationController(private val context: Context) {
     data class Measurement(
         val route: AncCalibrationSession.RouteIdentity,
         val excitation: FloatArray,
-        val response: FloatArray
+        val response: FloatArray,
+        val referenceChannel: Int = REFERENCE_CHANNEL,
+        val errorChannel: Int = ERROR_CHANNEL
     )
 
     fun measure(): Measurement? {
@@ -32,17 +37,23 @@ class HardwareCalibrationController(private val context: Context) {
         val manager = context.getSystemService(AudioManager::class.java)
         val output = findDevice(manager, false) ?: return null
         val input = findDevice(manager, true) ?: return null
-        val route = AncCalibrationSession.RouteIdentity(input.id, output.id, SAMPLE_RATE, 1, 1)
+        if (!supportsTwoInputChannels(input)) return null
+
+        val route = AncCalibrationSession.RouteIdentity(input.id, output.id, SAMPLE_RATE, INPUT_CHANNELS, 1)
         if (!route.isValid) return null
 
-        val minRecord = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val minRecord = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
         val minTrack = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minRecord <= 0 || minTrack <= 0) return null
 
         val record = AudioRecord.Builder()
             .setAudioSource(MediaRecorder.AudioSource.MIC)
-            .setAudioFormat(AudioFormat.Builder().setSampleRate(SAMPLE_RATE).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
-            .setBufferSizeInBytes(minRecord.coerceAtLeast(BUFFER_FRAMES * 2) * 4)
+            .setAudioFormat(AudioFormat.Builder()
+                .setSampleRate(SAMPLE_RATE)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+                .build())
+            .setBufferSizeInBytes(minRecord.coerceAtLeast(BUFFER_FRAMES * INPUT_CHANNELS * 2) * 4)
             .build()
         val track = AudioTrack.Builder()
             .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
@@ -55,13 +66,12 @@ class HardwareCalibrationController(private val context: Context) {
             if (record.state != AudioRecord.STATE_INITIALIZED || track.state != AudioTrack.STATE_INITIALIZED) return null
             record.preferredDevice = input
             track.preferredDevice = output
-
-            if (!routeMatches(record, input, track, output)) return null
+            if (!routeMatches(record, input, track, output) || record.channelCount < INPUT_CHANNELS) return null
 
             val excitation = FloatArray(EXCITATION_FRAMES)
             val excitationPcm = ShortArray(EXCITATION_FRAMES)
             buildExcitation(excitation, excitationPcm)
-            val responsePcm = ShortArray(EXCITATION_FRAMES + TAIL_FRAMES)
+            val responsePcm = ShortArray((EXCITATION_FRAMES + TAIL_FRAMES) * INPUT_CHANNELS)
 
             record.startRecording()
             track.play()
@@ -78,23 +88,20 @@ class HardwareCalibrationController(private val context: Context) {
             }
             writer.start()
 
-            var captured = 0
-            while (captured < responsePcm.size) {
-                val read = record.read(responsePcm, captured, minOf(BUFFER_FRAMES, responsePcm.size - captured), AudioRecord.READ_BLOCKING)
+            var capturedSamples = 0
+            while (capturedSamples < responsePcm.size) {
+                val read = record.read(responsePcm, capturedSamples, minOf(BUFFER_FRAMES * INPUT_CHANNELS, responsePcm.size - capturedSamples), AudioRecord.READ_BLOCKING)
                 if (read <= 0) break
-                captured += read
+                capturedSamples += read
             }
             writer.join(2500)
+            if (capturedSamples < responsePcm.size) return null
 
-            // The tail is required to observe real route latency. Do not accept a
-            // partial capture that could falsely look like a valid low-latency path.
-            if (captured < responsePcm.size) return null
-
-            // The estimator requires equal-length excitation/response windows.
-            // Keep the beginning of the measured response; the estimator searches
-            // the configured latency range using normalized cross-correlation.
+            // Secondary-path response is measured on the physical error microphone (channel 1).
             val response = FloatArray(EXCITATION_FRAMES)
-            for (i in response.indices) response[i] = responsePcm[i] / 32768f
+            for (frame in response.indices) {
+                response[frame] = responsePcm[frame * INPUT_CHANNELS + ERROR_CHANNEL] / 32768f
+            }
             return Measurement(route, excitation, response)
         } finally {
             runCatching { record.stop() }
@@ -104,17 +111,13 @@ class HardwareCalibrationController(private val context: Context) {
         }
     }
 
-    private fun routeMatches(
-        record: AudioRecord,
-        expectedInput: AudioDeviceInfo,
-        track: AudioTrack,
-        expectedOutput: AudioDeviceInfo
-    ): Boolean {
+    private fun routeMatches(record: AudioRecord, expectedInput: AudioDeviceInfo, track: AudioTrack, expectedOutput: AudioDeviceInfo): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return true
-        val actualInput = record.routedDevice
-        val actualOutput = track.routedDevice
-        return actualInput?.id == expectedInput.id && actualOutput?.id == expectedOutput.id
+        return record.routedDevice?.id == expectedInput.id && track.routedDevice?.id == expectedOutput.id
     }
+
+    private fun supportsTwoInputChannels(device: AudioDeviceInfo): Boolean =
+        device.channelCounts.isEmpty() || device.channelCounts.any { it >= INPUT_CHANNELS }
 
     private fun findDevice(manager: AudioManager, input: Boolean): AudioDeviceInfo? {
         val types = setOf(
@@ -122,10 +125,11 @@ class HardwareCalibrationController(private val context: Context) {
             AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
             AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
             AudioDeviceInfo.TYPE_BLE_HEADSET,
-            AudioDeviceInfo.TYPE_USB_HEADSET
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_DEVICE
         )
         val flags = if (input) AudioManager.GET_DEVICES_INPUTS else AudioManager.GET_DEVICES_OUTPUTS
-        return manager.getDevices(flags).firstOrNull { it.type in types }
+        return manager.getDevices(flags).firstOrNull { it.type in types && (!input || supportsTwoInputChannels(it)) }
     }
 
     /** Controlled excitation; measured response is never synthesized. */
