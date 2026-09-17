@@ -84,17 +84,7 @@ class AudioEngine(private val context: Context) {
         val model = result.estimate.model
         val aligner = result.estimate.latencyAligner
         if (!model.isValid || !aligner.isValid || model.sampleRateHz != SAMPLE_RATE || aligner.sampleRateHz != SAMPLE_RATE) return false
-        if (!NativeAudioEngine.configureAnc(
-                model.coefficients,
-                aligner.delaySamples,
-                model.confidence,
-                result.route.inputDeviceId,
-                result.route.outputDeviceId,
-                result.route.sampleRateHz,
-                result.route.inputChannels,
-                HardwareCalibrationController.REFERENCE_CHANNEL,
-                HardwareCalibrationController.ERROR_CHANNEL
-            )) return false
+        if (!NativeAudioEngine.configureAnc(model.coefficients, aligner.delaySamples, model.confidence, result.route.inputDeviceId, result.route.outputDeviceId, result.route.sampleRateHz, result.route.inputChannels, HardwareCalibrationController.REFERENCE_CHANNEL, HardwareCalibrationController.ERROR_CHANNEL)) return false
         validatedCalibration = result
         true
     }
@@ -115,37 +105,27 @@ class AudioEngine(private val context: Context) {
         lastError = null
         resetNativeMetrics()
         resetDspMetrics()
-
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             lastError = "Mikrofon izni verilmedi."
             state = State.ERROR
             return false
         }
-
         try {
             previousAudioMode = audioManager.mode
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             val routes = discoverDuplexRoutes()
             communicationDevice = routes.output
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !audioManager.setCommunicationDevice(routes.output)) {
-                throw IllegalStateException("Ses iletişim cihazı seçilemedi.")
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !audioManager.setCommunicationDevice(routes.output)) throw IllegalStateException("Ses iletişim cihazı seçilemedi.")
             routeName = routes.output.productName?.toString()?.ifBlank { null } ?: "Harici kulaklık"
-
             val calibration = validatedCalibration
             if (calibration != null) {
-                if (calibration.route.inputDeviceId != routes.input.id || calibration.route.outputDeviceId != routes.output.id) {
-                    throw IllegalStateException("Kalibrasyon rotası değişti; ANC güvenli bypass.")
-                }
-                if (!tryStartNativeBackend(routes.input, routes.output)) {
-                    throw IllegalStateException("Native AAudio ANC başlatılamadı; ANC güvenli bypass.")
-                }
+                if (calibration.route.inputDeviceId != routes.input.id || calibration.route.outputDeviceId != routes.output.id) throw IllegalStateException("Kalibrasyon rotası değişti; ANC güvenli bypass.")
+                if (!tryStartNativeBackend(routes.input, routes.output)) throw IllegalStateException("Native AAudio ANC başlatılamadı; ANC güvenli bypass.")
                 state = State.RUNNING
                 ancActive = true
                 startAncMonitor(routes.input.id, routes.output.id)
                 return true
             }
-
             startKotlinBackend(routes.output)
             state = State.RUNNING
             worker = Thread(::audioLoop, "LANU-AudioEngine").also { it.start() }
@@ -174,10 +154,7 @@ class AudioEngine(private val context: Context) {
         if (monitorToJoin != null && monitorToJoin !== Thread.currentThread()) {
             try { monitorToJoin.join(STOP_JOIN_TIMEOUT_MS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
-        synchronized(lifecycleLock) {
-            cleanupAudioResources()
-            state = State.IDLE
-        }
+        synchronized(lifecycleLock) { cleanupAudioResources(); state = State.IDLE }
     }
 
     private data class DuplexRoutes(val input: AudioDeviceInfo, val output: AudioDeviceInfo)
@@ -196,23 +173,15 @@ class AudioEngine(private val context: Context) {
                 nativeOutputDeviceId = NativeAudioEngine.outputDeviceId()
                 nativeInputChannels = NativeAudioEngine.inputChannelCount()
                 nativeOutputChannels = NativeAudioEngine.outputChannelCount()
-                if (nativeSampleRate != SAMPLE_RATE ||
-                    nativeInputDeviceId != input.id || nativeOutputDeviceId != output.id ||
-                    nativeInputChannels != 2 || nativeOutputChannels != 1) {
+                if (nativeSampleRate != SAMPLE_RATE || nativeInputDeviceId != input.id || nativeOutputDeviceId != output.id || nativeInputChannels != 2 || nativeOutputChannels != 1) {
                     NativeAudioEngine.stop()
                     resetNativeMetrics()
                     backend = Backend.NONE
                     return false
                 }
                 true
-            } else {
-                NativeAudioEngine.stop()
-                false
-            }
-        } catch (_: Throwable) {
-            runCatching { NativeAudioEngine.stop() }
-            false
-        }
+            } else { NativeAudioEngine.stop(); false }
+        } catch (_: Throwable) { runCatching { NativeAudioEngine.stop() }; false }
     }
 
     private fun startAncMonitor(expectedInputId: Int, expectedOutputId: Int) {
@@ -220,30 +189,13 @@ class AudioEngine(private val context: Context) {
         ancMonitor = Thread({
             while (!Thread.currentThread().isInterrupted && state == State.RUNNING && ancActive) {
                 try {
-                    if (NativeAudioEngine.ancFaulted()) {
-                        handleNativeRuntimeFault(NativeAudioEngine.ancFaultCode(), "Native ANC güvenlik fault'u oluştu; ses yolu bypass edildi.")
-                        break
-                    }
+                    if (NativeAudioEngine.ancFaulted()) { handleNativeRuntimeFault(NativeAudioEngine.ancFaultCode(), "Native ANC güvenlik fault'u oluştu; ses yolu bypass edildi."); break }
                     nativeXRunCount = NativeAudioEngine.xRunCount()
-                    if (nativeXRunCount > 0) {
-                        handleNativeRuntimeFault(3, "AAudio XRUN tespit edildi; ANC güvenli bypass'a alındı.")
-                        break
-                    }
-                    if (!NativeAudioEngine.isRunning() ||
-                        NativeAudioEngine.inputDeviceId() != expectedInputId ||
-                        NativeAudioEngine.outputDeviceId() != expectedOutputId
-                    ) {
-                        handleNativeRuntimeFault(7, "Ses rotası değişti veya native ANC akışı durdu; güvenli bypass.")
-                        break
-                    }
+                    if (nativeXRunCount > 0) { handleNativeRuntimeFault(3, "AAudio XRUN tespit edildi; ANC güvenli bypass'a alındı."); break }
+                    if (!NativeAudioEngine.isRunning() || NativeAudioEngine.inputDeviceId() != expectedInputId || NativeAudioEngine.outputDeviceId() != expectedOutputId) { handleNativeRuntimeFault(7, "Ses rotası değişti veya native ANC akışı durdu; güvenli bypass."); break }
                     Thread.sleep(ANC_MONITOR_INTERVAL_MS)
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    break
-                } catch (t: Throwable) {
-                    handleNativeRuntimeFault(7, "Native ANC izleme hatası: ${t.message ?: t.javaClass.simpleName}")
-                    break
-                }
+                } catch (_: InterruptedException) { Thread.currentThread().interrupt(); break }
+                catch (t: Throwable) { handleNativeRuntimeFault(7, "Native ANC izleme hatası: ${t.message ?: t.javaClass.simpleName}"); break }
             }
         }, "LANU-ANC-Monitor").also { it.start() }
     }
@@ -275,19 +227,10 @@ class AudioEngine(private val context: Context) {
         noiseSuppressorActive = noiseSuppressor?.enabled == true
         echoCancelerActive = echoCanceler?.enabled == true
         agcActive = agc?.enabled == true
-
         val minTrack = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         require(minTrack > 0) { "Ses çıkışı buffer boyutu alınamadı." }
-        track = AudioTrack.Builder()
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-            .setAudioFormat(AudioFormat.Builder().setSampleRate(SAMPLE_RATE).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-            .setBufferSizeInBytes(minTrack.coerceAtLeast(1024) * 2)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            track?.preferredDevice = selectedDevice
-            record?.preferredDevice = selectedDevice
-        }
+        track = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()).setAudioFormat(AudioFormat.Builder().setSampleRate(SAMPLE_RATE).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build()).setBufferSizeInBytes(minTrack.coerceAtLeast(1024) * 2).setTransferMode(AudioTrack.MODE_STREAM).build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) { track?.preferredDevice = selectedDevice; record?.preferredDevice = selectedDevice }
         record!!.startRecording()
         check(record!!.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Mikrofon kayıt başlatılamadı." }
         track!!.play()
@@ -311,56 +254,23 @@ class AudioEngine(private val context: Context) {
         runCatching { noiseSuppressor?.release() }
         runCatching { echoCanceler?.release() }
         runCatching { agc?.release() }
-        record = null
-        track = null
-        noiseSuppressor = null
-        echoCanceler = null
-        agc = null
-        communicationDevice = null
+        record = null; track = null; noiseSuppressor = null; echoCanceler = null; agc = null; communicationDevice = null
         inputDbFs = -120f
-        resetNativeMetrics()
-        resetDspMetrics()
-        noiseSuppressorActive = false
-        echoCancelerActive = false
-        agcActive = false
-        routeName = "-"
-        backend = Backend.NONE
-        ancActive = false
+        resetNativeMetrics(); resetDspMetrics()
+        noiseSuppressorActive = false; echoCancelerActive = false; agcActive = false
+        routeName = "-"; backend = Backend.NONE; ancActive = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) runCatching { audioManager.clearCommunicationDevice() }
         runCatching { audioManager.mode = previousAudioMode }
     }
 
-    private fun resetNativeMetrics() {
-        nativeSampleRate = 0
-        nativeFramesPerBurst = 0
-        nativeBufferSizeInFrames = 0
-        nativeXRunCount = 0
-        nativeInputDeviceId = 0
-        nativeOutputDeviceId = 0
-        nativeInputChannels = 0
-        nativeOutputChannels = 0
-    }
-
-    private fun resetDspMetrics() {
-        dspPipeline.reset()
-        dspProcessingMicros = 0L
-        dspMaxProcessingMicros = 0L
-        limiterActivations = 0L
-    }
+    private fun resetNativeMetrics() { nativeSampleRate = 0; nativeFramesPerBurst = 0; nativeBufferSizeInFrames = 0; nativeXRunCount = 0; nativeInputDeviceId = 0; nativeOutputDeviceId = 0; nativeInputChannels = 0; nativeOutputChannels = 0 }
+    private fun resetDspMetrics() { dspPipeline.reset(); dspProcessingMicros = 0L; dspMaxProcessingMicros = 0L; limiterActivations = 0L }
 
     private fun createRecorder(bufferSize: Int): AudioRecord {
         var last: Throwable? = null
         for (source in intArrayOf(MediaRecorder.AudioSource.VOICE_COMMUNICATION, MediaRecorder.AudioSource.MIC)) {
             try {
-                val candidate = AudioRecord.Builder()
-                    .setAudioSource(source)
-                    .setAudioFormat(AudioFormat.Builder()
-                        .setSampleRate(SAMPLE_RATE)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .build())
-                    .setBufferSizeInBytes(bufferSize)
-                    .build()
+                val candidate = AudioRecord.Builder().setAudioSource(source).setAudioFormat(AudioFormat.Builder().setSampleRate(SAMPLE_RATE).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()).setBufferSizeInBytes(bufferSize).build()
                 if (candidate.state == AudioRecord.STATE_INITIALIZED) return candidate
                 candidate.release()
             } catch (t: Throwable) { last = t }
@@ -368,29 +278,14 @@ class AudioEngine(private val context: Context) {
         throw IllegalStateException("Mikrofon başlatılamadı.", last)
     }
 
-    private fun supportsTwoInputChannels(device: AudioDeviceInfo): Boolean =
-        device.channelCounts.isEmpty() || device.channelCounts.any { it >= 2 }
+    private fun supportsTwoInputChannels(device: AudioDeviceInfo): Boolean = device.channelCounts.isEmpty() || device.channelCounts.any { it >= 2 }
 
     private fun discoverDuplexRoutes(): DuplexRoutes {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) throw IllegalStateException("Duplex harici ses rotası Android 6.0+ gerektirir.")
-        val preferredTypes = setOf(
-            AudioDeviceInfo.TYPE_WIRED_HEADSET,
-            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-            AudioDeviceInfo.TYPE_BLE_HEADSET,
-            AudioDeviceInfo.TYPE_USB_HEADSET,
-            AudioDeviceInfo.TYPE_USB_DEVICE
-        )
-        val devices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            audioManager.availableCommunicationDevices
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.getDevices(AudioManager.GET_DEVICES_ALL).toList()
-        }
-        val input = devices.firstOrNull { it.isSource && it.type in preferredTypes && supportsTwoInputChannels(it) }
-            ?: throw IllegalStateException("Gerçek 2 kanallı harici referans/hata girişi bulunamadı.")
-        val output = devices.firstOrNull { it.isSink && it.type in preferredTypes }
-            ?: throw IllegalStateException("Harici çıkış cihazı bulunamadı.")
+        val preferredTypes = setOf(AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE)
+        val devices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) audioManager.availableCommunicationDevices else { @Suppress("DEPRECATION") audioManager.getDevices(AudioManager.GET_DEVICES_ALL).toList() }
+        val input = devices.firstOrNull { it.isSource && it.type in preferredTypes && supportsTwoInputChannels(it) } ?: throw IllegalStateException("Gerçek 2 kanallı harici referans/hata girişi bulunamadı.")
+        val output = devices.firstOrNull { it.isSink && it.type in preferredTypes } ?: throw IllegalStateException("Harici çıkış cihazı bulunamadı.")
         return DuplexRoutes(input, output)
     }
 
@@ -400,42 +295,23 @@ class AudioEngine(private val context: Context) {
         val buffer = ShortArray(2048)
         try {
             while (state == State.RUNNING && !Thread.currentThread().isInterrupted) {
-                val read = try {
-                    localRecord.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
-                } catch (t: Throwable) {
-                    lastError = "Mikrofon okuma hatası: ${t.message ?: t.javaClass.simpleName}"
-                    state = State.ERROR
-                    break
-                }
+                val read = try { localRecord.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING) }
+                catch (t: Throwable) { lastError = "Mikrofon okuma hatası: ${t.message ?: t.javaClass.simpleName}"; state = State.ERROR; break }
                 if (read <= 0) continue
                 dspPipeline.process(buffer, read)
                 inputDbFs = AudioMath.rmsDbFs(buffer, read)
                 val m = dspPipeline.metrics
-                dspProcessingMicros = m.processingMicros
-                dspMaxProcessingMicros = m.maxProcessingMicros
-                limiterActivations = m.limiterActivations
+                dspProcessingMicros = m.processingMicros; dspMaxProcessingMicros = m.maxProcessingMicros; limiterActivations = m.limiterActivations
                 var offset = 0
                 while (offset < read && state == State.RUNNING) {
-                    val written = try {
-                        localTrack.write(buffer, offset, read - offset, AudioTrack.WRITE_BLOCKING)
-                    } catch (t: Throwable) {
-                        lastError = "Ses çıkışı hatası: ${t.message ?: t.javaClass.simpleName}"
-                        state = State.ERROR
-                        break
-                    }
-                    if (written <= 0) {
-                        lastError = "Ses çıkışı yazılamadı: $written"
-                        state = State.ERROR
-                        break
-                    }
+                    val written = try { localTrack.write(buffer, offset, read - offset, AudioTrack.WRITE_BLOCKING) }
+                    catch (t: Throwable) { lastError = "Ses çıkışı hatası: ${t.message ?: t.javaClass.simpleName}"; state = State.ERROR; break }
+                    if (written <= 0) { lastError = "Ses çıkışı yazılamadı: $written"; state = State.ERROR; break }
                     offset += written
                 }
             }
         } finally {
-            if (state == State.ERROR) {
-                runCatching { localRecord.stop() }
-                runCatching { localTrack.pause() }
-            }
+            if (state == State.ERROR) { runCatching { localRecord.stop() }; runCatching { localTrack.pause() } }
         }
     }
 }
