@@ -1,8 +1,8 @@
 <resources>
     <string name="app_name">LANU ANC</string>
-    <string name="subtitle">Telefon + ANC'siz kulaklık için yazılımsal gürültü azaltma</string>
-    <string name="safety_note">Bu sürüm donanımsal ANC üretmez. Mikrofon sinyalini Android'in desteklediği Noise Suppressor, Echo Canceler ve Automatic Gain Control efektleriyle işleyip harici kulaklığa aktarır. Geri beslemeyi önlemek için kulaklık bağlı olmadan başlatılmaz.</string>
-    <string name="start">Gürültü azaltmayı başlat</string>
+    <string name="subtitle">Telefon + ANCsiz kulaklik icin yazilimsal gurultu azaltma</string>
+    <string name="safety_note">Bu surum donanimsal ANC uretmez. Mikrofon sinyalini Androidin destekledigi Noise Suppressor, Echo Canceler ve Automatic Gain Control efektleriyle isleyip harici kulakliga aktarir. Geri beslemeyi onlemek icin kulaklik bagli olmadan baslatilmaz.</string>
+    <string name="start">Gurultu azaltmayi baslat</string>
     <string name="stop">Durdur</string>
-    <string name="footer">v0.1 • Gerçek cihaz ölçümü yapılmadan yüzde gürültü azaltma vaadi yoktur. Desteklenen efektler cihazdan cihaza değişebilir.</string>
+    <string name="footer">v0.1 - Gercek cihaz olcumu yapilmadan yuzde gurultu azaltma vaadi yoktur. Desteklenen efektler cihazdan cihaza degisebilir.</string>
 </resources>
