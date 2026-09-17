@@ -123,3 +123,33 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_lanu_anc_NativeAudioEngine_lanuNativeIsRunning(JNIEnv*, jobject) {
     return g.running.load(std::memory_order_acquire) ? JNI_TRUE : JNI_FALSE;
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeSampleRate(JNIEnv*, jobject) {
+    return g.output ? AAudioStream_getSampleRate(g.output) : 0;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeFramesPerBurst(JNIEnv*, jobject) {
+    return g.output ? AAudioStream_getFramesPerBurst(g.output) : 0;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeBufferSizeInFrames(JNIEnv*, jobject) {
+    return g.output ? AAudioStream_getBufferSizeInFrames(g.output) : 0;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeXRunCount(JNIEnv*, jobject) {
+    return g.output ? AAudioStream_getXRunCount(g.output) : 0;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeInputDeviceId(JNIEnv*, jobject) {
+    return g.input ? AAudioStream_getDeviceId(g.input) : 0;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeOutputDeviceId(JNIEnv*, jobject) {
+    return g.output ? AAudioStream_getDeviceId(g.output) : 0;
+}
