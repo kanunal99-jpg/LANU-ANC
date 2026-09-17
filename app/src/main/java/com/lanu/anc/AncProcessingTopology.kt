@@ -2,7 +2,6 @@ package com.lanu.anc
 
 /**
  * Safety-first topology contract for the active-noise-control path.
- *
  * Active anti-noise remains bypassed until physical reference/error channels,
  * route identity, latency calibration and a measured secondary-path model are
  * all validated. No synthetic second channel is inferred.
@@ -86,11 +85,43 @@ class AncProcessingTopology(
     /** Allocation-free processing once calibrated and activated. */
     fun process(reference: Float, error: Float): Float {
         if (state != State.ACTIVE) return 0f
+        if (!reference.isFinite() || !error.isFinite()) {
+            state = State.FAULT
+            fxLms?.reset()
+            return 0f
+        }
         val alignedReference = aligner?.align(reference) ?: return 0f
+        if (!alignedReference.isFinite()) {
+            state = State.FAULT
+            fxLms?.reset()
+            return 0f
+        }
         val core = fxLms ?: return 0f
         val antiNoise = core.predict(alignedReference)
         core.adapt(error)
-        return antiNoise.coerceIn(-0.8912509f, 0.8912509f)
+        val safeOutput = antiNoise.coerceIn(-0.8912509f, 0.8912509f)
+        if (!safeOutput.isFinite() || core.coefficientMagnitude() > fxLmsMaxCoefficient) {
+            state = State.FAULT
+            core.reset()
+            return 0f
+        }
+        return safeOutput
+    }
+
+    /**
+     * Realtime bridge contract. Reference/error must already be distinct
+     * physical signals; this method never duplicates or fabricates a channel.
+     */
+    fun processBlock(reference: FloatArray, error: FloatArray, output: FloatArray): Boolean {
+        if (reference.size != error.size || output.size < reference.size || state != State.ACTIVE) return false
+        for (i in reference.indices) {
+            output[i] = process(reference[i], error[i])
+            if (state == State.FAULT) {
+                output.fill(0f, i, reference.size)
+                return false
+            }
+        }
+        return true
     }
 
     fun coefficientMagnitude(): Float = fxLms?.coefficientMagnitude() ?: adaptiveFilter.coefficientMagnitude()
