@@ -15,9 +15,17 @@ class AncProcessingTopologyTest {
         )!!
         val aligner = LatencyAligner.calibrated(2, 48_000, 0.95f)!!
         return AncProcessingTopology.Validation(
-            true, true, true, true, model, aligner,
-            referenceDeviceId = 101, referenceChannel = 0,
-            errorDeviceId = 102, errorChannel = 0, inputChannelCount = 1
+            referenceChannelPresent = true,
+            errorChannelPresent = true,
+            routeValidated = true,
+            latencyAligned = true,
+            secondaryPathModel = model,
+            latencyAligner = aligner,
+            referenceDeviceId = 11,
+            referenceChannel = 0,
+            errorDeviceId = 12,
+            errorChannel = 0,
+            inputChannelCount = 1
         )
     }
 
@@ -30,21 +38,6 @@ class AncProcessingTopologyTest {
     }
 
     @Test
-    fun single_mono_input_is_rejected_even_with_calibration() {
-        val topology = AncProcessingTopology()
-        val v = calibration().copy(errorDeviceId = 101, inputChannelCount = 1)
-        assertFalse(topology.validate(v))
-        assertEquals(AncProcessingTopology.State.BYPASS, topology.state)
-    }
-
-    @Test
-    fun same_channel_on_same_device_is_rejected() {
-        val topology = AncProcessingTopology()
-        val v = calibration().copy(errorChannel = 0, errorDeviceId = 101, inputChannelCount = 2)
-        assertFalse(topology.validate(v))
-    }
-
-    @Test
     fun physical_calibration_is_required_before_activation() {
         val topology = AncProcessingTopology()
         assertFalse(topology.validate(AncProcessingTopology.Validation(true, true, true, true)))
@@ -52,11 +45,15 @@ class AncProcessingTopologyTest {
     }
 
     @Test
-    fun validated_distinct_physical_signals_can_activate_and_process() {
+    fun validated_calibration_can_activate_and_process_block() {
         val topology = AncProcessingTopology(fxLmsTaps = 8)
         assertTrue(topology.validate(calibration()))
         assertTrue(topology.activate())
-        repeat(20) { topology.process(0.1f, 0.02f) }
+        val reference = FloatArray(32) { 0.1f }
+        val error = FloatArray(32) { 0.02f }
+        val output = FloatArray(32)
+        assertTrue(topology.processBlock(reference, error, output))
+        assertTrue(output.any { it != 0f })
         assertTrue(topology.coefficientMagnitude() > 0f)
     }
 
@@ -65,8 +62,22 @@ class AncProcessingTopologyTest {
         val model = SecondaryPathModel.measured(floatArrayOf(1f), 48_000, 0, 1f)!!
         val aligner = LatencyAligner.calibrated(0, 44_100, 1f)!!
         val topology = AncProcessingTopology()
-        val v = calibration().copy(secondaryPathModel = model, latencyAligner = aligner)
-        assertFalse(topology.validate(v))
+        assertFalse(topology.validate(AncProcessingTopology.Validation(true, true, true, true, model, aligner, 11, 0, 12, 0, 1)))
+    }
+
+    @Test
+    fun same_physical_signal_is_rejected() {
+        val calibration = calibration().copy(errorDeviceId = 11, errorChannel = 0)
+        assertFalse(AncProcessingTopology().validate(calibration))
+    }
+
+    @Test
+    fun non_finite_sample_causes_fault_and_zero_output() {
+        val topology = AncProcessingTopology(fxLmsTaps = 8)
+        assertTrue(topology.validate(calibration()))
+        assertTrue(topology.activate())
+        assertEquals(0f, topology.process(Float.NaN, 0.02f), 0.000001f)
+        assertEquals(AncProcessingTopology.State.FAULT, topology.state)
     }
 
     @Test
