@@ -19,7 +19,7 @@ object NativeAudioEngine {
 
     fun isAvailable(): Boolean = loaded
 
-    fun start(): Boolean = loaded && lanuNativeStart()
+    fun start(deviceId: Int): Boolean = loaded && lanuNativeStart(deviceId)
 
     fun stop() {
         if (loaded) lanuNativeStop()
@@ -27,7 +27,20 @@ object NativeAudioEngine {
 
     fun isRunning(): Boolean = loaded && lanuNativeIsRunning()
 
-    private external fun lanuNativeStart(): Boolean
+    fun sampleRate(): Int = if (loaded) lanuNativeSampleRate() else 0
+    fun framesPerBurst(): Int = if (loaded) lanuNativeFramesPerBurst() else 0
+    fun bufferSizeInFrames(): Int = if (loaded) lanuNativeBufferSizeInFrames() else 0
+    fun xRunCount(): Int = if (loaded) lanuNativeXRunCount() else 0
+    fun inputDeviceId(): Int = if (loaded) lanuNativeInputDeviceId() else 0
+    fun outputDeviceId(): Int = if (loaded) lanuNativeOutputDeviceId() else 0
+
+    private external fun lanuNativeStart(deviceId: Int): Boolean
     private external fun lanuNativeStop()
     private external fun lanuNativeIsRunning(): Boolean
+    private external fun lanuNativeSampleRate(): Int
+    private external fun lanuNativeFramesPerBurst(): Int
+    private external fun lanuNativeBufferSizeInFrames(): Int
+    private external fun lanuNativeXRunCount(): Int
+    private external fun lanuNativeInputDeviceId(): Int
+    private external fun lanuNativeOutputDeviceId(): Int
 }
