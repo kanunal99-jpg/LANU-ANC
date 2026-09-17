@@ -16,7 +16,7 @@ class AudioEngine(private val context: Context) {
     enum class State { IDLE, STARTING, RUNNING, STOPPING, ERROR }
     enum class Backend { NONE, NATIVE_AAUDIO, KOTLIN_AUDIO_RECORD }
 
-    companion object { const val SAMPLE_RATE = 48_000; private const val STOP_JOIN_TIMEOUT_MS = 1500L }
+    companion object { const val SAMPLE_RATE = 48_000; private const val STOP_JOIN_TIMEOUT_MS = 1500L; private const val ANC_MONITOR_INTERVAL_MS = 50L }
 
     @Volatile var state: State = State.IDLE
         private set
@@ -73,6 +73,7 @@ class AudioEngine(private val context: Context) {
     private var echoCanceler: android.media.audiofx.AcousticEchoCanceler? = null
     private var agc: android.media.audiofx.AutomaticGainControl? = null
     private var worker: Thread? = null
+    private var ancMonitor: Thread? = null
     private var communicationDevice: AudioDeviceInfo? = null
     private val lifecycleLock = Any()
     private var previousAudioMode = AudioManager.MODE_NORMAL
@@ -112,7 +113,10 @@ class AudioEngine(private val context: Context) {
             if (calibration != null) {
                 if (calibration.route.inputDeviceId != routes.input.id || calibration.route.outputDeviceId != routes.output.id) throw IllegalStateException("Kalibrasyon rotası değişti; ANC güvenli bypass.")
                 if (!tryStartNativeBackend(routes.input, routes.output)) throw IllegalStateException("Native AAudio ANC başlatılamadı; ANC güvenli bypass.")
-                state = State.RUNNING; ancActive = true; return true
+                state = State.RUNNING
+                ancActive = true
+                startAncMonitor(routes.input.id, routes.output.id)
+                return true
             }
 
             startKotlinBackend(routes.output)
@@ -129,8 +133,16 @@ class AudioEngine(private val context: Context) {
 
     fun stop() {
         val threadToJoin: Thread?
-        synchronized(lifecycleLock) { if (state == State.IDLE) return; state = State.STOPPING; threadToJoin = worker; runningSignalStop() }
+        val monitorToJoin: Thread?
+        synchronized(lifecycleLock) {
+            if (state == State.IDLE) return
+            state = State.STOPPING
+            threadToJoin = worker
+            monitorToJoin = ancMonitor
+            runningSignalStop()
+        }
         if (threadToJoin != null && threadToJoin !== Thread.currentThread()) try { threadToJoin.join(STOP_JOIN_TIMEOUT_MS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        if (monitorToJoin != null && monitorToJoin !== Thread.currentThread()) try { monitorToJoin.join(STOP_JOIN_TIMEOUT_MS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         synchronized(lifecycleLock) { cleanupAudioResources(); state = State.IDLE }
     }
 
@@ -150,6 +162,50 @@ class AudioEngine(private val context: Context) {
         } catch (_: Throwable) { runCatching { NativeAudioEngine.stop() }; false }
     }
 
+    private fun startAncMonitor(expectedInputId: Int, expectedOutputId: Int) {
+        ancMonitor?.interrupt()
+        ancMonitor = Thread({
+            while (!Thread.currentThread().isInterrupted && state == State.RUNNING && ancActive) {
+                try {
+                    if (NativeAudioEngine.ancFaulted()) {
+                        handleNativeRuntimeFault(NativeAudioEngine.ancFaultCode(), "Native ANC güvenlik fault'u oluştu; ses yolu bypass edildi.")
+                        break
+                    }
+                    val xrun = NativeAudioEngine.xRunCount()
+                    nativeXRunCount = xrun
+                    if (xrun > 0) {
+                        handleNativeRuntimeFault(3, "AAudio XRUN tespit edildi; ANC güvenli bypass'a alındı.")
+                        break
+                    }
+                    if (!NativeAudioEngine.isRunning() || NativeAudioEngine.inputDeviceId() != expectedInputId || NativeAudioEngine.outputDeviceId() != expectedOutputId) {
+                        handleNativeRuntimeFault(7, "Ses rotası değişti veya native ANC akışı durdu; güvenli bypass.")
+                        break
+                    }
+                    Thread.sleep(ANC_MONITOR_INTERVAL_MS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                } catch (t: Throwable) {
+                    handleNativeRuntimeFault(7, "Native ANC izleme hatası: ${t.message ?: t.javaClass.simpleName}")
+                    break
+                }
+            }
+        }, "LANU-ANC-Monitor").also { it.start() }
+    }
+
+    private fun handleNativeRuntimeFault(code: Int, message: String) = synchronized(lifecycleLock) {
+        if (!ancActive && state != State.RUNNING) return
+        ancFaultCode = code
+        lastError = message
+        ancActive = false
+        runCatching { NativeAudioEngine.stop() }
+        backend = Backend.NONE
+        routeName = "-"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) runCatching { audioManager.clearCommunicationDevice() }
+        runCatching { audioManager.mode = previousAudioMode }
+        state = State.ERROR
+    }
+
     private fun startKotlinBackend(selectedDevice: AudioDeviceInfo) {
         val minRecord = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT); require(minRecord > 0) { "Mikrofon buffer boyutu alınamadı." }
         val recordBuffer = minRecord.coerceAtLeast(1024) * 2
@@ -167,12 +223,19 @@ class AudioEngine(private val context: Context) {
         record!!.startRecording(); check(record!!.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Mikrofon kayıt başlatılamadı." }; track!!.play(); backend = Backend.KOTLIN_AUDIO_RECORD
     }
 
-    private fun runningSignalStop() { if (backend == Backend.NATIVE_AAUDIO) runCatching { NativeAudioEngine.stop() }; record?.let { runCatching { it.stop() } }; track?.let { runCatching { it.pause() } }; worker?.interrupt() }
+    private fun runningSignalStop() {
+        ancMonitor?.interrupt()
+        if (backend == Backend.NATIVE_AAUDIO) runCatching { NativeAudioEngine.stop() }
+        record?.let { runCatching { it.stop() } }
+        track?.let { runCatching { it.pause() } }
+        worker?.interrupt()
+    }
 
     private fun cleanupAudioResources() {
+        ancMonitor = null
         if (backend == Backend.NATIVE_AAUDIO) runCatching { NativeAudioEngine.stop() }
         worker = null; runCatching { record?.release() }; runCatching { track?.release() }; runCatching { noiseSuppressor?.release() }; runCatching { echoCanceler?.release() }; runCatching { agc?.release() }
-        record = null; track = null; noiseSuppressor = null; echoCanceler = null; agc = null; communicationDevice = null; inputDbFs = -120f; resetNativeMetrics(); resetDspMetrics(); noiseSuppressorActive = false; echoCancelerActive = false; agcActive = false; routeName = "-"; backend = Backend.NONE; ancActive = false; ancFaultCode = 0
+        record = null; track = null; noiseSuppressor = null; echoCanceler = null; agc = null; communicationDevice = null; inputDbFs = -120f; resetNativeMetrics(); resetDspMetrics(); noiseSuppressorActive = false; echoCancelerActive = false; agcActive = false; routeName = "-"; backend = Backend.NONE; ancActive = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) runCatching { audioManager.clearCommunicationDevice() }
         runCatching { audioManager.mode = previousAudioMode }
     }
