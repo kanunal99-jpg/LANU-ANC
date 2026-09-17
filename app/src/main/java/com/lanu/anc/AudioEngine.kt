@@ -196,7 +196,9 @@ class AudioEngine(private val context: Context) {
                 nativeOutputDeviceId = NativeAudioEngine.outputDeviceId()
                 nativeInputChannels = NativeAudioEngine.inputChannelCount()
                 nativeOutputChannels = NativeAudioEngine.outputChannelCount()
-                if (nativeInputDeviceId != input.id || nativeOutputDeviceId != output.id || nativeInputChannels != 2 || nativeOutputChannels != 1) {
+                if (nativeSampleRate != SAMPLE_RATE ||
+                    nativeInputDeviceId != input.id || nativeOutputDeviceId != output.id ||
+                    nativeInputChannels != 2 || nativeOutputChannels != 1) {
                     NativeAudioEngine.stop()
                     resetNativeMetrics()
                     backend = Backend.NONE
