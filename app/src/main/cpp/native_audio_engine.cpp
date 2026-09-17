@@ -7,6 +7,7 @@ namespace {
 constexpr int32_t kSampleRate = 48000;
 constexpr int32_t kChannels = 1;
 constexpr uint32_t kRingFrames = 16384;
+constexpr int32_t kUnspecifiedDevice = AAUDIO_UNSPECIFIED;
 
 struct Ring {
     int16_t data[kRingFrames]{};
@@ -62,7 +63,7 @@ void closeStream(AAudioStream*& s) {
     s = nullptr;
 }
 
-bool openStreams() {
+bool openStreams(int32_t deviceId) {
     AAudioStreamBuilder* in = nullptr;
     AAudioStreamBuilder* out = nullptr;
     if (AAudio_createStreamBuilder(&in) != AAUDIO_OK || AAudio_createStreamBuilder(&out) != AAUDIO_OK) {
@@ -76,6 +77,10 @@ bool openStreams() {
     AAudioStreamBuilder_setChannelCount(in, kChannels);
     AAudioStreamBuilder_setFormat(in, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setPerformanceMode(in, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setDeviceId(in, deviceId);
+    if (AAudioStreamBuilder_setInputPreset) {
+        AAudioStreamBuilder_setInputPreset(in, AAUDIO_INPUT_PRESET_VOICE_PERFORMANCE);
+    }
     AAudioStreamBuilder_setDataCallback(in, inputCb, &g);
 
     AAudioStreamBuilder_setDirection(out, AAUDIO_DIRECTION_OUTPUT);
@@ -83,6 +88,7 @@ bool openStreams() {
     AAudioStreamBuilder_setChannelCount(out, kChannels);
     AAudioStreamBuilder_setFormat(out, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setPerformanceMode(out, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setDeviceId(out, deviceId);
     AAudioStreamBuilder_setDataCallback(out, outputCb, &g);
 
     const auto inResult = AAudioStreamBuilder_openStream(in, &g.input);
@@ -94,14 +100,21 @@ bool openStreams() {
         closeStream(g.output);
         return false;
     }
+
+    if (AAudioStream_getDeviceId(g.input) != deviceId || AAudioStream_getDeviceId(g.output) != deviceId) {
+        closeStream(g.input);
+        closeStream(g.output);
+        return false;
+    }
     return true;
 }
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_lanu_anc_NativeAudioEngine_lanuNativeStart(JNIEnv*, jobject) {
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeStart(JNIEnv*, jobject, jint deviceId) {
     if (g.running.load(std::memory_order_acquire)) return JNI_TRUE;
-    if (!openStreams()) return JNI_FALSE;
+    const int32_t requestedDevice = deviceId > 0 ? deviceId : kUnspecifiedDevice;
+    if (!openStreams(requestedDevice)) return JNI_FALSE;
     g.running.store(true, std::memory_order_release);
     if (AAudioStream_requestStart(g.input) != AAUDIO_OK || AAudioStream_requestStart(g.output) != AAUDIO_OK) {
         g.running.store(false, std::memory_order_release);
