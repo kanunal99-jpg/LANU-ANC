@@ -1,4 +1,5 @@
 #include <aaudio/AAudio.h>
+#include <jni.h>
 #include <atomic>
 #include <cstring>
 
@@ -87,21 +88,26 @@ bool openStreams() {
 }
 }
 
-extern "C" bool lanuNativeStart() {
-    if (g.running.load(std::memory_order_acquire)) return true;
-    if (!openStreams()) return false;
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeStart(JNIEnv*, jobject) {
+    if (g.running.load(std::memory_order_acquire)) return JNI_TRUE;
+    if (!openStreams()) return JNI_FALSE;
     g.running.store(true, std::memory_order_release);
     if (AAudioStream_requestStart(g.input) != AAUDIO_OK || AAudioStream_requestStart(g.output) != AAUDIO_OK) {
         g.running.store(false, std::memory_order_release);
         closeStream(g.input); closeStream(g.output);
-        return false;
+        return JNI_FALSE;
     }
-    return true;
+    return JNI_TRUE;
 }
 
-extern "C" void lanuNativeStop() {
+extern "C" JNIEXPORT void JNICALL
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeStop(JNIEnv*, jobject) {
     g.running.store(false, std::memory_order_release);
     closeStream(g.input); closeStream(g.output);
 }
 
-extern "C" bool lanuNativeIsRunning() { return g.running.load(std::memory_order_acquire); }
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_lanu_anc_NativeAudioEngine_lanuNativeIsRunning(JNIEnv*, jobject) {
+    return g.running.load(std::memory_order_acquire) ? JNI_TRUE : JNI_FALSE;
+}
