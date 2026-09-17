@@ -17,7 +17,8 @@ data class AncCapabilities(
     val hasCommunicationDevice: Boolean,
     val inputDeviceTypes: Set<Int>,
     val outputDeviceTypes: Set<Int>,
-    val nativeAaudioAvailable: Boolean
+    val nativeAaudioAvailable: Boolean,
+    val hasPotentialDualChannelInput: Boolean
 ) {
     val canAttemptNativeLowLatency: Boolean
         get() = apiLevel >= Build.VERSION_CODES.O && nativeAaudioAvailable && lowLatencyFeature
@@ -26,6 +27,13 @@ data class AncCapabilities(
     val hasExternalDuplexRoute: Boolean
         get() = hasCommunicationDevice && inputDeviceTypes.any { it in EXTERNAL_TYPES } &&
             outputDeviceTypes.any { it in EXTERNAL_TYPES }
+
+    /**
+     * Capability hint only: this does not prove that the two channels are physically
+     * independent reference/error microphones. Runtime route validation must still prove it.
+     */
+    val canProvideReferenceErrorChannels: Boolean
+        get() = hasExternalDuplexRoute && hasPotentialDualChannelInput
 
     companion object {
         private val EXTERNAL_TYPES = setOf(
@@ -46,6 +54,9 @@ data class AncCapabilities(
             } else {
                 outputs.any { it.type in EXTERNAL_TYPES }
             }
+            val dualChannelInput = inputs.any { device ->
+                device.type in EXTERNAL_TYPES && device.channelCounts.any { it >= 2 }
+            }
             return AncCapabilities(
                 apiLevel = Build.VERSION.SDK_INT,
                 lowLatencyFeature = pm.hasSystemFeature(PackageManager.FEATURE_AUDIO_LOW_LATENCY),
@@ -53,7 +64,8 @@ data class AncCapabilities(
                 hasCommunicationDevice = communication,
                 inputDeviceTypes = inputs.map { it.type }.toSet(),
                 outputDeviceTypes = outputs.map { it.type }.toSet(),
-                nativeAaudioAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && NativeAudioEngine.isAvailable()
+                nativeAaudioAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && NativeAudioEngine.isAvailable(),
+                hasPotentialDualChannelInput = dualChannelInput
             )
         }
     }
