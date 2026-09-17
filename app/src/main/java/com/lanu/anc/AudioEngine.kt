@@ -53,11 +53,12 @@ class AudioEngine(private val context: Context) {
         return try {
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             communicationDevice = chooseExternalDevice()
-            if (communicationDevice == null) {
+            val selectedDevice = communicationDevice
+            if (selectedDevice == null) {
                 throw IllegalStateException("Harici kulaklık bulunamadı. Güvenli kullanım için kablolu/Bluetooth/USB kulaklık bağlayın.")
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (!audioManager.setCommunicationDevice(communicationDevice)) {
+                if (!audioManager.setCommunicationDevice(selectedDevice)) {
                     throw IllegalStateException("Ses iletişim cihazı seçilemedi.")
                 }
             }
@@ -106,13 +107,13 @@ class AudioEngine(private val context: Context) {
                 .build()
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                track?.preferredDevice = communicationDevice
-                record?.preferredDevice = communicationDevice
+                track?.preferredDevice = selectedDevice
+                record?.preferredDevice = selectedDevice
             }
 
             record!!.startRecording()
             track!!.play()
-            routeName = communicationDevice?.productName?.toString()?.ifBlank { null } ?: "Harici kulaklık"
+            routeName = selectedDevice.productName?.toString()?.ifBlank { null } ?: "Harici kulaklık"
             running = true
             worker = Thread(::audioLoop, "LANU-AudioEngine").also { it.start() }
             true
