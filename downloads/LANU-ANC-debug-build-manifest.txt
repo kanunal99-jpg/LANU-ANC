@@ -1,4 +1,4 @@
 LANU ANC debug build
-Commit: 854dc8acfea0b4bbbd51b266bb0f67e00c14923f
+Commit: f4d5c57e2e1cec4e7fc60b79190744620f04a9b9
 APK: downloads/LANU-ANC-debug.apk
-SHA-256: 17f8efb8602b82c6ade396b186d8ebe4c0d0c89ec3a45bc21c4918617baf65d2
+SHA-256: 7381e0a6aab9224e6e3c10e1cfd9d858a7857bd40516854565a09f24f6be08e4
