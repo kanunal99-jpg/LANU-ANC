@@ -1,19 +1,13 @@
 name: Apply native ANC migration
 
 on:
-  workflow_run:
-    workflows: ["Android APK"]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   migrate:
-    if: >-
-      ${{ github.event.workflow_run.conclusion == 'success' &&
-          !contains(github.event.workflow_run.head_commit.message, 'connect measured dual-channel FxLMS') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
