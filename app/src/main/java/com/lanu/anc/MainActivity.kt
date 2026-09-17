@@ -29,6 +29,7 @@ class MainActivity : android.app.Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val calibrationExecutor = Executors.newSingleThreadExecutor()
     private lateinit var status: TextView
+    private lateinit var topology: TextView
     private lateinit var level: TextView
     private lateinit var route: TextView
     private lateinit var effects: TextView
@@ -84,6 +85,14 @@ class MainActivity : android.app.Activity() {
         super.onDestroy()
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_AUDIO && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            requestNotificationPermissionIfNeeded()
+        }
+        render()
+    }
+
     private fun buildUi(): ScrollView {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -105,11 +114,13 @@ class MainActivity : android.app.Activity() {
         }, fullWidth())
 
         status = label("Durum: Hazır")
+        topology = label("Native AAudio: kontrol ediliyor…")
         level = label("Mikrofon seviyesi: -120 dBFS")
         route = label("Çıkış: -")
         effects = label("İşleme: bekleniyor")
         calibration = label("Kalibrasyon: yapılmadı")
         root.addView(status, fullWidth())
+        root.addView(topology, fullWidth())
         root.addView(level, fullWidth())
         root.addView(route, fullWidth())
         root.addView(effects, fullWidth())
@@ -124,7 +135,7 @@ class MainActivity : android.app.Activity() {
             setOnClickListener { stopEngine() }
         }
         calibrateButton = Button(this).apply {
-            text = "Gerçek cihazı kalibre et"
+            text = getString(R.string.calibrate)
             setOnClickListener { calibrateHardware() }
         }
         root.addView(startButton, fullWidth())
@@ -186,13 +197,20 @@ class MainActivity : android.app.Activity() {
         val s = service
         if (s == null) {
             status.text = "Durum: Servis hazır değil"
+            topology.text = "Native AAudio: ${if (NativeAudioEngine.isAvailable()) "hazır" else "kullanılamıyor"}"
             level.text = "Mikrofon seviyesi: -120 dBFS"
             route.text = "Çıkış: -"
             effects.text = "İşleme: bekleniyor"
             calibration.text = "Kalibrasyon: yapılmadı"
-            startButton.isEnabled = true
+            startButton.isEnabled = false
             stopButton.isEnabled = false
+            calibrateButton.isEnabled = false
             return
+        }
+        topology.text = if (s.nativeBackendAvailable()) {
+            "Native AAudio: HAZIR • 48 kHz • 2 giriş / 1 çıkış"
+        } else {
+            "Native AAudio: KULLANILAMIYOR • güvenli bypass"
         }
         status.text = when {
             s.error() != null -> "Durum: HATA — ${s.error()}"
@@ -203,7 +221,7 @@ class MainActivity : android.app.Activity() {
         level.text = "Mikrofon seviyesi: ${"%.1f".format(s.inputDbFs())} dBFS"
         route.text = "Çıkış: ${s.routeName()}"
         effects.text = when {
-            s.isAncActive() -> "İşleme: Native AAudio ANC • gerçek 2-kanal giriş • FxLMS"
+            s.isAncActive() -> "İşleme: Native AAudio ANC • CH0 reference • CH1 error • FxLMS"
             s.isRunning() -> "İşleme: güvenli bypass • NS=${flag(s.nsActive())} • AEC=${flag(s.aecActive())} • AGC=${flag(s.agcActive())}"
             s.error() != null -> "İşleme: güvenli duruş • fault=${s.ancFaultCode()}"
             else -> "İşleme: bekleniyor"
@@ -211,7 +229,7 @@ class MainActivity : android.app.Activity() {
         if (s.calibrationState() == AncCalibrationSession.State.VALIDATED) calibration.text = "Kalibrasyon: DOĞRULANDI • gerçek ölçüm"
         startButton.isEnabled = !s.isRunning()
         stopButton.isEnabled = s.isRunning()
-        calibrateButton.isEnabled = calibrationExecutor.isShutdown.not()
+        calibrateButton.isEnabled = !s.isRunning() && !calibrationExecutor.isShutdown
     }
 
     private fun requestPermissionsIfNeeded() {
@@ -219,6 +237,10 @@ class MainActivity : android.app.Activity() {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
             return
         }
+        requestNotificationPermissionIfNeeded()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)

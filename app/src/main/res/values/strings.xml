@@ -1,8 +1,9 @@
 <resources>
     <string name="app_name">LANU ANC</string>
-    <string name="subtitle">Telefon + ANCsiz kulaklik icin yazilimsal gurultu azaltma</string>
-    <string name="safety_note">Bu surum donanimsal ANC uretmez. Mikrofon sinyalini Androidin destekledigi Noise Suppressor, Echo Canceler ve Automatic Gain Control efektleriyle isleyip harici kulakliga aktarir. Geri beslemeyi onlemek icin kulaklik bagli olmadan baslatilmaz.</string>
-    <string name="start">Gurultu azaltmayi baslat</string>
+    <string name="subtitle">Gerçek cihaz ölçümü tabanlı ANC motoru • Android</string>
+    <string name="safety_note">Gerçek ANC yalnızca doğrulanmış kalibrasyon, 2 bağımsız giriş kanalı (CH0 referans + CH1 hata) ve doğrulanmış harici çıkış rotası bulunduğunda etkinleştirilir. Native AAudio FxLMS yolu güvenlik fault'unda otomatik olarak durur ve uygulama güvenli bypass'a geçer.</string>
+    <string name="start">ANC'yi başlat</string>
     <string name="stop">Durdur</string>
-    <string name="footer">v0.1 - Gercek cihaz olcumu yapilmadan yuzde gurultu azaltma vaadi yoktur. Desteklenen efektler cihazdan cihaza degisebilir.</string>
+    <string name="calibrate">Gerçek cihazı kalibre et</string>
+    <string name="footer">v1.0.0 • Yazılım/CI doğrulaması fiziksel cihazdaki ölçülebilir residual-noise azaltımının yerine geçmez. Fiziksel ANC sonucu yalnızca gerçek donanım testiyle doğrulanır.</string>
 </resources>

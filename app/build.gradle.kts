@@ -11,8 +11,8 @@ android {
         applicationId = "com.lanu.anc"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "1.0.0"
 
         externalNativeBuild {
             cmake {
@@ -23,6 +23,8 @@ android {
 
     buildTypes {
         release {
+            // JNI entry points intentionally keep the class/method names expected by the native AAudio layer.
+            // Release optimization can be enabled once a production signing + R8 keep-rule set is introduced.
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
