@@ -65,6 +65,8 @@ class AudioProcessingService : Service() {
     fun isRunning(): Boolean = engine.running
     fun inputDbFs(): Float = engine.inputDbFs
     fun routeName(): String = engine.routeName
+    fun backend(): AudioEngine.Backend = engine.backend
+    fun nativeBackendAvailable(): Boolean = engine.nativeBackendAvailable
     fun nsActive(): Boolean = engine.noiseSuppressorActive
     fun aecActive(): Boolean = engine.echoCancelerActive
     fun agcActive(): Boolean = engine.agcActive
@@ -93,8 +95,13 @@ class AudioProcessingService : Service() {
 
     private fun updateNotification() {
         if (!::engine.isInitialized) return
+        val backendText = when (engine.backend) {
+            AudioEngine.Backend.NATIVE_AAUDIO -> "Native AAudio"
+            AudioEngine.Backend.KOTLIN_AUDIO_RECORD -> "Kotlin fallback"
+            AudioEngine.Backend.NONE -> "Hazır"
+        }
         val text = when {
-            engine.running -> "Çalışıyor • ${engine.routeName}"
+            engine.running -> "Çalışıyor • $backendText • ${engine.routeName}"
             engine.lastError != null -> "Hata: ${engine.lastError}"
             else -> "Hazır"
         }
