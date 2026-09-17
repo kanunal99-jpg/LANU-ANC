@@ -1,9 +1,9 @@
 <resources>
     <string name="app_name">LANU ANC</string>
-    <string name="subtitle">Gerçek cihaz ölçümü tabanlı ANC motoru • Android</string>
-    <string name="safety_note">Gerçek ANC yalnızca doğrulanmış kalibrasyon, 2 bağımsız giriş kanalı (CH0 referans + CH1 hata) ve doğrulanmış harici çıkış rotası bulunduğunda etkinleştirilir. Native AAudio FxLMS yolu güvenlik fault'unda otomatik olarak durur ve uygulama güvenli bypass'a geçer.</string>
-    <string name="start">ANC'yi başlat</string>
+    <string name="subtitle">Gerçek cihaz ölçümü tabanlı ANC motoru - Android</string>
+    <string name="safety_note">Gerçek ANC yalnızca doğrulanmış kalibrasyon, 2 bağımsız giriş kanalı (CH0 referans + CH1 hata) ve doğrulanmış harici çıkış rotası bulunduğunda etkinleştirilir. Native AAudio FxLMS yolu güvenlik faultunda otomatik olarak durur ve uygulama güvenli bypassa geçer.</string>
+    <string name="start">ANCyi başlat</string>
     <string name="stop">Durdur</string>
     <string name="calibrate">Gerçek cihazı kalibre et</string>
-    <string name="footer">v1.0.0 • Yazılım/CI doğrulaması fiziksel cihazdaki ölçülebilir residual-noise azaltımının yerine geçmez. Fiziksel ANC sonucu yalnızca gerçek donanım testiyle doğrulanır.</string>
+    <string name="footer">v1.0.0 - Yazılım/CI doğrulaması fiziksel cihazdaki ölçülebilir residual-noise azaltımının yerine geçmez. Fiziksel ANC sonucu yalnızca gerçek donanım testiyle doğrulanır.</string>
 </resources>
