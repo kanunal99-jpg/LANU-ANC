@@ -108,10 +108,7 @@ float alignReference(float sample) {
 }
 
 float predictAndAdapt(float reference, float error) {
-    if (!std::isfinite(reference) || !std::isfinite(error)) {
-        fault(4);
-        return 0.0f;
-    }
+    if (!std::isfinite(reference) || !std::isfinite(error)) { fault(4); return 0.0f; }
     const float aligned = alignReference(reference);
     g.referenceHistory[g.cursor] = aligned;
 
@@ -121,10 +118,7 @@ float predictAndAdapt(float reference, float error) {
         prediction += g.weights[i] * g.referenceHistory[index];
         if (--index < 0) index = kMaxTaps - 1;
     }
-    if (!std::isfinite(prediction)) {
-        fault(4);
-        return 0.0f;
-    }
+    if (!std::isfinite(prediction)) { fault(4); return 0.0f; }
 
     float filtered = 0.0f;
     index = g.cursor;
@@ -132,10 +126,7 @@ float predictAndAdapt(float reference, float error) {
         filtered += g.config.secondaryPath[i] * g.referenceHistory[index];
         if (--index < 0) index = kMaxTaps - 1;
     }
-    if (!std::isfinite(filtered)) {
-        fault(4);
-        return 0.0f;
-    }
+    if (!std::isfinite(filtered)) { fault(4); return 0.0f; }
     g.filteredReference[g.cursor] = filtered;
 
     float energy = kEpsilon;
@@ -147,29 +138,20 @@ float predictAndAdapt(float reference, float error) {
     }
 
     const float step = kLearningRate * error / energy;
-    if (!std::isfinite(step)) {
-        fault(4);
-        return 0.0f;
-    }
+    if (!std::isfinite(step)) { fault(4); return 0.0f; }
 
     index = g.cursor;
     g.maxAbsCoefficient = 0.0f;
     for (int32_t i = 0; i < kMaxTaps; ++i) {
         float next = g.weights[i] + step * g.filteredReference[index];
-        if (!std::isfinite(next)) {
-            fault(5);
-            return 0.0f;
-        }
+        if (!std::isfinite(next)) { fault(5); return 0.0f; }
         if (next > 1.0f) next = 1.0f;
         if (next < -1.0f) next = -1.0f;
         g.weights[i] = next;
         g.maxAbsCoefficient = std::fmax(g.maxAbsCoefficient, std::fabs(next));
         if (--index < 0) index = kMaxTaps - 1;
     }
-    if (g.maxAbsCoefficient > 1.0f || !std::isfinite(g.maxAbsCoefficient)) {
-        fault(5);
-        return 0.0f;
-    }
+    if (g.maxAbsCoefficient > 1.0f || !std::isfinite(g.maxAbsCoefficient)) { fault(5); return 0.0f; }
 
     ++g.cursor;
     if (g.cursor == kMaxTaps) g.cursor = 0;
@@ -181,10 +163,7 @@ aaudio_data_callback_result_t inputCb(AAudioStream*, void* user, void* data, int
     if (!e->running.load(std::memory_order_relaxed)) return AAUDIO_CALLBACK_RESULT_STOP;
     if (frames <= 0) return AAUDIO_CALLBACK_RESULT_CONTINUE;
     const uint32_t pushed = e->ring.push(static_cast<const int16_t*>(data), static_cast<uint32_t>(frames));
-    if (pushed != static_cast<uint32_t>(frames)) {
-        fault(2);
-        return AAUDIO_CALLBACK_RESULT_STOP;
-    }
+    if (pushed != static_cast<uint32_t>(frames)) { fault(2); return AAUDIO_CALLBACK_RESULT_STOP; }
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 
@@ -192,7 +171,6 @@ aaudio_data_callback_result_t outputCb(AAudioStream*, void* user, void* data, in
     auto* e = static_cast<Engine*>(user);
     auto* out = static_cast<int16_t*>(data);
     if (frames <= 0) return AAUDIO_CALLBACK_RESULT_CONTINUE;
-
     const auto started = std::chrono::steady_clock::now();
     if (!e->running.load(std::memory_order_relaxed) || e->faulted.load(std::memory_order_acquire)) {
         std::memset(out, 0, static_cast<size_t>(frames) * sizeof(int16_t));
@@ -204,8 +182,6 @@ aaudio_data_callback_result_t outputCb(AAudioStream*, void* user, void* data, in
         return AAUDIO_CALLBACK_RESULT_STOP;
     }
 
-    // Keep the input frame storage separate from the mono output buffer.
-    // The previous implementation could write 2*frames samples into the output buffer.
     int16_t inputFrames[4096]{};
     const uint32_t copied = e->ring.pop(inputFrames, static_cast<uint32_t>(frames));
     if (copied < static_cast<uint32_t>(frames)) {
@@ -234,12 +210,7 @@ aaudio_data_callback_result_t outputCb(AAudioStream*, void* user, void* data, in
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 
-void closeStream(AAudioStream*& s) {
-    if (!s) return;
-    AAudioStream_requestStop(s);
-    AAudioStream_close(s);
-    s = nullptr;
-}
+void closeStream(AAudioStream*& s) { if (!s) return; AAudioStream_requestStop(s); AAudioStream_close(s); s = nullptr; }
 
 bool openStreams(int32_t inputDeviceId, int32_t outputDeviceId) {
     AAudioStreamBuilder* in = nullptr;
@@ -250,7 +221,6 @@ bool openStreams(int32_t inputDeviceId, int32_t outputDeviceId) {
         fault(7);
         return false;
     }
-
     AAudioStreamBuilder_setDirection(in, AAUDIO_DIRECTION_INPUT);
     AAudioStreamBuilder_setSampleRate(in, kSampleRate);
     AAudioStreamBuilder_setChannelCount(in, kInputChannels);
@@ -258,7 +228,6 @@ bool openStreams(int32_t inputDeviceId, int32_t outputDeviceId) {
     AAudioStreamBuilder_setPerformanceMode(in, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setDeviceId(in, inputDeviceId);
     AAudioStreamBuilder_setDataCallback(in, inputCb, &g);
-
     AAudioStreamBuilder_setDirection(out, AAUDIO_DIRECTION_OUTPUT);
     AAudioStreamBuilder_setSampleRate(out, kSampleRate);
     AAudioStreamBuilder_setChannelCount(out, kOutputChannels);
@@ -278,7 +247,6 @@ bool openStreams(int32_t inputDeviceId, int32_t outputDeviceId) {
         fault(7);
         return false;
     }
-
     if (AAudioStream_getDeviceId(g.input) != inputDeviceId ||
         AAudioStream_getDeviceId(g.output) != outputDeviceId ||
         AAudioStream_getChannelCount(g.input) != kInputChannels ||
