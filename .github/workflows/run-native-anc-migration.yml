@@ -1,0 +1,49 @@
+name: Apply native ANC migration
+
+on:
+  workflow_run:
+    workflows: ["Android APK"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          !contains(github.event.workflow_run.head_commit.message, 'connect measured dual-channel FxLMS') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply native ANC migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/apply-native-anc-migration.sh
+          bash scripts/apply-native-anc-migration.sh
+
+      - name: Commit native ANC migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            app/src/main/java/com/lanu/anc/HardwareCalibrationController.kt \
+            app/src/main/java/com/lanu/anc/NativeAudioEngine.kt \
+            app/src/main/java/com/lanu/anc/AudioEngine.kt \
+            app/src/main/java/com/lanu/anc/AudioProcessingService.kt \
+            app/src/main/cpp/native_audio_engine.cpp
+          if git diff --cached --quiet; then
+            echo "Migration already applied."
+            exit 0
+          fi
+          git commit -m "feat: connect measured dual-channel FxLMS to native AAudio [skip ci]"
+          git push origin HEAD:main
