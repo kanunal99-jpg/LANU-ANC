@@ -195,13 +195,19 @@ class MainActivity : android.app.Activity() {
             return
         }
         status.text = when {
-            s.isRunning() -> "Durum: ÇALIŞIYOR"
             s.error() != null -> "Durum: HATA — ${s.error()}"
+            s.isAncActive() -> "Durum: ANC AKTİF"
+            s.isRunning() -> "Durum: ÇALIŞIYOR • güvenli bypass"
             else -> "Durum: Hazır"
         }
         level.text = "Mikrofon seviyesi: ${"%.1f".format(s.inputDbFs())} dBFS"
         route.text = "Çıkış: ${s.routeName()}"
-        effects.text = "İşleme: NS=${flag(s.nsActive())} • AEC=${flag(s.aecActive())} • AGC=${flag(s.agcActive())}"
+        effects.text = when {
+            s.isAncActive() -> "İşleme: Native AAudio ANC • gerçek 2-kanal giriş • FxLMS"
+            s.isRunning() -> "İşleme: güvenli bypass • NS=${flag(s.nsActive())} • AEC=${flag(s.aecActive())} • AGC=${flag(s.agcActive())}"
+            s.error() != null -> "İşleme: güvenli duruş • fault=${s.ancFaultCode()}"
+            else -> "İşleme: bekleniyor"
+        }
         if (s.calibrationState() == AncCalibrationSession.State.VALIDATED) calibration.text = "Kalibrasyon: DOĞRULANDI • gerçek ölçüm"
         startButton.isEnabled = !s.isRunning()
         stopButton.isEnabled = s.isRunning()
