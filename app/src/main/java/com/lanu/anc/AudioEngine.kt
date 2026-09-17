@@ -43,6 +43,18 @@ class AudioEngine(private val context: Context) {
         private set
     @Volatile var agcActive: Boolean = false
         private set
+    @Volatile var nativeSampleRate: Int = 0
+        private set
+    @Volatile var nativeFramesPerBurst: Int = 0
+        private set
+    @Volatile var nativeBufferSizeInFrames: Int = 0
+        private set
+    @Volatile var nativeXRunCount: Int = 0
+        private set
+    @Volatile var nativeInputDeviceId: Int = 0
+        private set
+    @Volatile var nativeOutputDeviceId: Int = 0
+        private set
     @Volatile var lastError: String? = null
         private set
 
@@ -63,6 +75,7 @@ class AudioEngine(private val context: Context) {
         state = State.STARTING
         backend = Backend.NONE
         lastError = null
+        resetNativeMetrics()
 
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             lastError = "Mikrofon izni verilmedi."
@@ -83,7 +96,7 @@ class AudioEngine(private val context: Context) {
 
             routeName = selectedDevice.productName?.toString()?.ifBlank { null } ?: "Harici kulaklık"
 
-            if (tryStartNativeBackend()) {
+            if (tryStartNativeBackend(selectedDevice)) {
                 state = State.RUNNING
                 return true
             }
@@ -121,12 +134,18 @@ class AudioEngine(private val context: Context) {
         }
     }
 
-    private fun tryStartNativeBackend(): Boolean {
+    private fun tryStartNativeBackend(selectedDevice: AudioDeviceInfo): Boolean {
         if (!nativeBackendAvailable) return false
         return try {
-            val started = NativeAudioEngine.start()
+            val started = NativeAudioEngine.start(selectedDevice.id)
             if (started && NativeAudioEngine.isRunning()) {
                 backend = Backend.NATIVE_AAUDIO
+                nativeSampleRate = NativeAudioEngine.sampleRate()
+                nativeFramesPerBurst = NativeAudioEngine.framesPerBurst()
+                nativeBufferSizeInFrames = NativeAudioEngine.bufferSizeInFrames()
+                nativeXRunCount = NativeAudioEngine.xRunCount()
+                nativeInputDeviceId = NativeAudioEngine.inputDeviceId()
+                nativeOutputDeviceId = NativeAudioEngine.outputDeviceId()
                 true
             } else {
                 NativeAudioEngine.stop()
@@ -220,6 +239,7 @@ class AudioEngine(private val context: Context) {
         agc = null
         communicationDevice = null
         inputDbFs = -120f
+        resetNativeMetrics()
         noiseSuppressorActive = false
         echoCancelerActive = false
         agcActive = false
@@ -230,6 +250,15 @@ class AudioEngine(private val context: Context) {
             try { audioManager.clearCommunicationDevice() } catch (_: Throwable) { }
         }
         try { audioManager.mode = previousAudioMode } catch (_: Throwable) { }
+    }
+
+    private fun resetNativeMetrics() {
+        nativeSampleRate = 0
+        nativeFramesPerBurst = 0
+        nativeBufferSizeInFrames = 0
+        nativeXRunCount = 0
+        nativeInputDeviceId = 0
+        nativeOutputDeviceId = 0
     }
 
     private fun createRecorder(bufferSize: Int): AudioRecord {
