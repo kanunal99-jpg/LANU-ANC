@@ -1,10 +1,11 @@
 package com.lanu.anc
 
+import android.content.Context
+
 /** Coordinates the calibration state machine with a real Android audio route. */
-class HardwareCalibrationSession(
-    private val measurement: HardwareCalibrationController = HardwareCalibrationControllerPlaceholder.unavailable()
-) {
+class HardwareCalibrationSession(context: Context) {
     private val session = AncCalibrationSession()
+    private val controller = HardwareCalibrationController(context)
 
     data class Outcome(
         val state: AncCalibrationSession.State,
@@ -13,20 +14,11 @@ class HardwareCalibrationSession(
     )
 
     fun run(): Outcome {
-        val controller = measurement as? HardwareCalibrationController
-            ?: return Outcome(AncCalibrationSession.State.FAILED, error = "Gerçek cihaz ölçüm sağlayıcısı yok.")
         val measured = runCatching { controller.measure() }.getOrNull()
             ?: return Outcome(AncCalibrationSession.State.FAILED, error = "Harici giriş/çıkış rotası veya gerçek ölçüm alınamadı.")
-
-        if (!session.begin(measured.route)) {
-            return Outcome(AncCalibrationSession.State.FAILED, error = session.lastError)
-        }
+        if (!session.begin(measured.route)) return Outcome(AncCalibrationSession.State.FAILED, error = session.lastError)
         session.markRecordingComplete()
-        val result = session.estimate(
-            excitation = measured.excitation,
-            response = measured.response,
-            route = measured.route
-        )
+        val result = session.estimate(measured.excitation, measured.response, measured.route)
         return Outcome(session.state, result, session.lastError)
     }
 
@@ -34,9 +26,4 @@ class HardwareCalibrationSession(
     fun state(): AncCalibrationSession.State = session.state
     fun result(): AncCalibrationSession.Result? = session.result
     fun error(): String? = session.lastError
-
-    /** Internal factory hook keeps the public class deterministic for unit tests. */
-    private object HardwareCalibrationControllerPlaceholder {
-        fun unavailable(): HardwareCalibrationController = throw IllegalStateException("Use HardwareCalibrationSession(context).")
-    }
 }
