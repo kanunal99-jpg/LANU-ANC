@@ -43,6 +43,12 @@ class AudioEngine(private val context: Context) {
         private set
     @Volatile var agcActive: Boolean = false
         private set
+    @Volatile var dspProcessingMicros: Long = 0L
+        private set
+    @Volatile var dspMaxProcessingMicros: Long = 0L
+        private set
+    @Volatile var limiterActivations: Long = 0L
+        private set
     @Volatile var nativeSampleRate: Int = 0
         private set
     @Volatile var nativeFramesPerBurst: Int = 0
@@ -59,6 +65,7 @@ class AudioEngine(private val context: Context) {
         private set
 
     private val audioManager = context.getSystemService(AudioManager::class.java)
+    private val dspPipeline = DspPipeline()
     private var record: AudioRecord? = null
     private var track: AudioTrack? = null
     private var noiseSuppressor: android.media.audiofx.NoiseSuppressor? = null
@@ -76,6 +83,7 @@ class AudioEngine(private val context: Context) {
         backend = Backend.NONE
         lastError = null
         resetNativeMetrics()
+        resetDspMetrics()
 
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             lastError = "Mikrofon izni verilmedi."
@@ -240,6 +248,7 @@ class AudioEngine(private val context: Context) {
         communicationDevice = null
         inputDbFs = -120f
         resetNativeMetrics()
+        resetDspMetrics()
         noiseSuppressorActive = false
         echoCancelerActive = false
         agcActive = false
@@ -259,6 +268,13 @@ class AudioEngine(private val context: Context) {
         nativeXRunCount = 0
         nativeInputDeviceId = 0
         nativeOutputDeviceId = 0
+    }
+
+    private fun resetDspMetrics() {
+        dspPipeline.reset()
+        dspProcessingMicros = 0L
+        dspMaxProcessingMicros = 0L
+        limiterActivations = 0L
     }
 
     private fun createRecorder(bufferSize: Int): AudioRecord {
@@ -324,7 +340,12 @@ class AudioEngine(private val context: Context) {
                     break
                 }
                 if (read <= 0) continue
+                dspPipeline.process(buffer, read)
                 inputDbFs = AudioMath.rmsDbFs(buffer, read)
+                val dspMetrics = dspPipeline.metrics
+                dspProcessingMicros = dspMetrics.processingMicros
+                dspMaxProcessingMicros = dspMetrics.maxProcessingMicros
+                limiterActivations = dspMetrics.limiterActivations
                 var offset = 0
                 while (offset < read && state == State.RUNNING) {
                     val written = try {
