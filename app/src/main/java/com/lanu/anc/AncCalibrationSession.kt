@@ -21,7 +21,7 @@ class AncCalibrationSession(
     ) {
         val isValid: Boolean
             get() = inputDeviceId > 0 && outputDeviceId > 0 &&
-                sampleRateHz > 0 && inputChannels > 0 && outputChannels > 0
+                sampleRateHz > 0 && inputChannels >= 2 && outputChannels >= 1
     }
 
     data class Result(
