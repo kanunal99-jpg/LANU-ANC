@@ -86,7 +86,7 @@ class AudioEngine(private val context: Context) {
                 if (!tryStartNativeBackend(routes.input, routes.output)) throw IllegalStateException("Native AAudio ANC başlatılamadı; ANC güvenli bypass.")
                 state = State.RUNNING; ancActive = true; startAncMonitor(routes.input.id, routes.output.id); return true
             }
-            startKotlinBackend(routes.output); state = State.RUNNING; worker = Thread(::audioLoop, "LANU-AudioEngine").also { it.start() }; true
+            startKotlinBackend(routes.input, routes.output); state = State.RUNNING; worker = Thread(::audioLoop, "LANU-AudioEngine").also { it.start() }; true
         } catch (t: Throwable) { lastError = t.message ?: t.javaClass.simpleName; state = State.ERROR; cleanupAudioResources(); false }
     }
 
@@ -137,7 +137,7 @@ class AudioEngine(private val context: Context) {
         runCatching { audioManager.mode = previousAudioMode }; state = State.ERROR
     }
 
-    private fun startKotlinBackend(selectedDevice: AudioDeviceInfo) {
+    private fun startKotlinBackend(inputDevice: AudioDeviceInfo, outputDevice: AudioDeviceInfo) {
         val minRecord = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         require(minRecord > 0) { "Mikrofon buffer boyutu alınamadı." }
         record = createRecorder(minRecord.coerceAtLeast(1024) * 2)
@@ -150,7 +150,7 @@ class AudioEngine(private val context: Context) {
         val minTrack = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         require(minTrack > 0) { "Ses çıkışı buffer boyutu alınamadı." }
         track = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()).setAudioFormat(AudioFormat.Builder().setSampleRate(SAMPLE_RATE).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build()).setBufferSizeInBytes(minTrack.coerceAtLeast(1024) * 2).setTransferMode(AudioTrack.MODE_STREAM).build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) { track?.preferredDevice = selectedDevice }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) { record?.preferredDevice = inputDevice; track?.preferredDevice = outputDevice }
         record!!.startRecording(); check(record!!.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Mikrofon kayıt başlatılamadı." }; track!!.play(); backend = Backend.KOTLIN_AUDIO_RECORD
     }
 
