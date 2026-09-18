@@ -1,7 +1,7 @@
 LANU ANC Android build
-Commit: 975a336cbb41845f3ea70520f2799225a0d0f50b
+Commit: 77b25480e44594c1af376b7d45e13584fc88c7fd
 APK: downloads/LANU-ANC.apk
-SHA-256: 58c8984da445a6353cdc475fb7207f21c1676d9b693031cc5722094c04fb857c
+SHA-256: 1bf26fc27a6d02e64f9482337d2a758efbdf95ab15ed74fa7a42f7dd1cadf350
 Version: 1.0.0
 Build type: debug / installable development build
 Physical ANC validation: requires real two-channel hardware test
