@@ -25,7 +25,7 @@ class AncProcessingTopologyTest {
             referenceChannel = 0,
             errorDeviceId = 12,
             errorChannel = 0,
-            inputChannelCount = 1
+            inputChannelCount = 2
         )
     }
 
