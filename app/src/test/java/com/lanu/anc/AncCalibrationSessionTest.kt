@@ -11,7 +11,9 @@ class AncCalibrationSessionTest {
     private val route = AncCalibrationSession.RouteIdentity(
         inputDeviceId = 11,
         outputDeviceId = 22,
-        sampleRateHz = 48_000
+        sampleRateHz = 48_000,
+        inputChannels = 2,
+        outputChannels = 1
     )
 
     @Test
