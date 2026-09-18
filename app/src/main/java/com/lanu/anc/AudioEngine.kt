@@ -150,7 +150,7 @@ class AudioEngine(private val context: Context) {
         val minTrack = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         require(minTrack > 0) { "Ses çıkışı buffer boyutu alınamadı." }
         track = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()).setAudioFormat(AudioFormat.Builder().setSampleRate(SAMPLE_RATE).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build()).setBufferSizeInBytes(minTrack.coerceAtLeast(1024) * 2).setTransferMode(AudioTrack.MODE_STREAM).build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) { track?.preferredDevice = selectedDevice; record?.preferredDevice = selectedDevice }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) { track?.preferredDevice = selectedDevice }
         record!!.startRecording(); check(record!!.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Mikrofon kayıt başlatılamadı." }; track!!.play(); backend = Backend.KOTLIN_AUDIO_RECORD
     }
 
