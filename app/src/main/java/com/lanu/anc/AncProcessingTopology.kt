@@ -29,6 +29,7 @@ class AncProcessingTopology(
     ) {
         private val distinctPhysicalSignals: Boolean
             get() = referenceDeviceId > 0 && errorDeviceId > 0 && inputChannelCount > 0 &&
+                inputChannelCount >= 2 &&
                 referenceChannel in 0 until inputChannelCount &&
                 errorChannel in 0 until inputChannelCount &&
                 (referenceDeviceId != errorDeviceId || referenceChannel != errorChannel)
