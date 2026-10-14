@@ -56,3 +56,5 @@ Audio stream başlatılamazsa uygulama kilitlenmez. Kullanıcıya sebep ve uygul
 
 ## 16. Release gate
 APK release adayı sayılmadan önce build, install, microphone permission, route detection, start/stop, background lifecycle, Bluetooth route, audio failure recovery, rotation/process death ve uzun süreli stress testleri tamamlanır.
+## 17. Tek kulaklık ve dört faz (1.1.0)
+Sağ veya sol tek kulaklık tüketici kullanımında eşdeğerdir. Mono mikrofon dinlemesi iki kanallı ANC kalibrasyonuna bağlanmaz. Her geliştirmede dört faz: Araştır → Düzelt/Uygula → Test/Doğrula → Yayınla. Normal arama filtreleme veya açık kulağın duyduğu ortamı susturma vaat edilmez.

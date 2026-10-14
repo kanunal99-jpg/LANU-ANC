@@ -1,258 +1,102 @@
 package com.lanu.anc
 
 import android.Manifest
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.ServiceConnection
+import android.content.*
 import android.content.pm.PackageManager
-import android.os.Build
-import android.os.Bundle
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
+import android.os.*
 import android.view.ViewGroup
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import java.util.concurrent.Executors
+import android.widget.*
 
 class MainActivity : android.app.Activity() {
-    private companion object {
-        const val REQ_AUDIO = 10
-        const val REQ_NOTIFY = 11
-    }
-
     private var service: AudioProcessingService? = null
-    private var bound = false
+    private var binding = false
     private val handler = Handler(Looper.getMainLooper())
-    private val calibrationExecutor = Executors.newSingleThreadExecutor()
     private lateinit var status: TextView
-    private lateinit var topology: TextView
-    private lateinit var level: TextView
-    private lateinit var route: TextView
-    private lateinit var effects: TextView
-    private lateinit var calibration: TextView
-    private lateinit var startButton: Button
-    private lateinit var stopButton: Button
-    private lateinit var calibrateButton: Button
-
+    private lateinit var details: TextView
+    private lateinit var start: Button
+    private lateinit var stop: Button
+    private lateinit var reduction: Switch
+    private lateinit var volume: SeekBar
+    private var permissionStart = false
+    private var startPending = false
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as? AudioProcessingService.LocalBinder)?.service()
-            bound = true
+            service?.let { reduction.isChecked = it.reductionEnabled(); volume.progress = (it.gain() * 100).toInt() }
+            if (startPending) { startPending = false; startAudio() }
             render()
         }
-        override fun onServiceDisconnected(name: ComponentName?) {
-            bound = false
-            service = null
-            render()
-        }
+        override fun onServiceDisconnected(name: ComponentName?) { service = null; render() }
     }
-
-    private val ticker = object : Runnable {
-        override fun run() {
-            render()
-            handler.postDelayed(this, 250)
-        }
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(buildUi())
-        requestPermissionsIfNeeded()
-        handler.post(ticker)
-    }
-
+    private val ticker = object : Runnable { override fun run() { render(); handler.postDelayed(this, 350) } }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContentView(buildUi()) }
     override fun onStart() {
         super.onStart()
-        bindService(Intent(this, AudioProcessingService::class.java), connection, Context.BIND_AUTO_CREATE)
+        binding = bindService(Intent(this, AudioProcessingService::class.java), connection, Context.BIND_AUTO_CREATE)
+        handler.post(ticker)
     }
-
     override fun onStop() {
-        if (bound) {
-            unbindService(connection)
-            bound = false
-            service = null
-        }
+        handler.removeCallbacks(ticker)
+        if (binding) { unbindService(connection); binding = false; service = null }
         super.onStop()
     }
-
-    override fun onDestroy() {
-        handler.removeCallbacks(ticker)
-        calibrationExecutor.shutdownNow()
-        super.onDestroy()
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_AUDIO && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            requestNotificationPermissionIfNeeded()
+    override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(code, permissions, results)
+        if (code == 10) {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                status.text = "Mikrofon izni verilmedi. Ayarlar → Uygulamalar → LANU → İzinler bölümünden açabilirsiniz."
+                permissionStart = false
+                return
+            }
+            if (permissionStart) { permissionStart = false; startAudio() }
         }
-        render()
     }
-
+    private fun startAudio() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissionStart = true
+            val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) permissions += Manifest.permission.BLUETOOTH_CONNECT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) permissions += Manifest.permission.POST_NOTIFICATIONS
+            requestPermissions(permissions.toTypedArray(), 10)
+            return
+        }
+        if (service == null) { startPending = true; status.text = "Servis hazırlanıyor…"; return }
+        try {
+            start.isEnabled = false
+            startForegroundService(Intent(this, AudioProcessingService::class.java).setAction(AudioProcessingService.ACTION_START))
+        } catch (e: Exception) { status.text = "Başlatılamadı: ${e.message ?: "İzinleri kontrol edin"}"; start.isEnabled = true }
+    }
     private fun buildUi(): ScrollView {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(28), dp(20), dp(28))
-        }
-        root.addView(TextView(this).apply {
-            text = getString(R.string.app_name)
-            textSize = 30f
-        }, fullWidth())
-        root.addView(TextView(this).apply {
-            text = getString(R.string.subtitle)
-            textSize = 16f
-            setPadding(0, dp(8), 0, dp(20))
-        }, fullWidth())
-        root.addView(TextView(this).apply {
-            text = getString(R.string.safety_note)
-            textSize = 14f
-            setPadding(dp(14), dp(14), dp(14), dp(14))
-        }, fullWidth())
-
-        status = label("Durum: Hazır")
-        topology = label("Native AAudio: kontrol ediliyor…")
-        level = label("Mikrofon seviyesi: -120 dBFS")
-        route = label("Çıkış: -")
-        effects = label("İşleme: bekleniyor")
-        calibration = label("Kalibrasyon: yapılmadı")
-        root.addView(status, fullWidth())
-        root.addView(topology, fullWidth())
-        root.addView(level, fullWidth())
-        root.addView(route, fullWidth())
-        root.addView(effects, fullWidth())
-        root.addView(calibration, fullWidth())
-
-        startButton = Button(this).apply {
-            text = getString(R.string.start)
-            setOnClickListener { startEngine() }
-        }
-        stopButton = Button(this).apply {
-            text = getString(R.string.stop)
-            setOnClickListener { stopEngine() }
-        }
-        calibrateButton = Button(this).apply {
-            text = getString(R.string.calibrate)
-            setOnClickListener { calibrateHardware() }
-        }
-        root.addView(startButton, fullWidth())
-        root.addView(stopButton, fullWidth())
-        root.addView(calibrateButton, fullWidth())
-        root.addView(TextView(this).apply {
-            text = getString(R.string.footer)
-            textSize = 12f
-            setPadding(0, dp(22), 0, 0)
-        }, fullWidth())
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)) }
+        fun text(value: String, size: Float = 16f): TextView = TextView(this).apply { text = value; textSize = size; setPadding(0, dp(10), 0, dp(6)) }.also { root.addView(it, fullWidth()) }
+        text(getString(R.string.app_name), 28f)
+        text(getString(R.string.subtitle), 18f)
+        text(getString(R.string.safety_note), 14f)
+        status = text("Hazır • bir kulaklık bağlayın").apply { id = 101 }
+        details = text("Sağ veya sol kulaklık • mono ses").apply { id = 102 }
+        reduction = Switch(this).apply { text = "Mikrofon gürültü azaltma"; isChecked = true; setOnCheckedChangeListener { _, checked -> service?.setReduction(checked) } }
+        root.addView(reduction, fullWidth())
+        text("Dinleme seviyesi • düşükten başlayın", 14f)
+        volume = SeekBar(this).apply { max = 50; progress = 15; setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { if (fromUser) service?.setGain(value / 100f) }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        }) }
+        root.addView(volume, fullWidth())
+        start = Button(this).apply { id = 103; text = getString(R.string.start); setOnClickListener { startAudio() } }
+        stop = Button(this).apply { id = 104; text = getString(R.string.stop); setOnClickListener { service?.stopProcessing() } }
+        root.addView(start, fullWidth()); root.addView(stop, fullWidth())
+        text("Kullanım: Tek kulaklığı bağlayın → Başlat → Telefona veya kulaklık mikrofonuna konuşun. Filtreyi açıp kapatarak dinleyin. Bluetooth kullanırken gecikme duyabilirsiniz.", 14f)
+        text(getString(R.string.footer), 12f)
         return ScrollView(this).apply { addView(root) }
     }
-
-    private fun startEngine() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissionsIfNeeded()
-            return
-        }
-        if (!bound) {
-            bindService(Intent(this, AudioProcessingService::class.java), connection, Context.BIND_AUTO_CREATE)
-            status.text = "Durum: Servis bağlanıyor…"
-            return
-        }
-        val intent = Intent(this, AudioProcessingService::class.java).setAction(AudioProcessingService.ACTION_START)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-        service?.startProcessing()
-        render()
-    }
-
-    private fun stopEngine() {
-        service?.stopProcessing()
-        stopService(Intent(this, AudioProcessingService::class.java))
-        render()
-    }
-
-    private fun calibrateHardware() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissionsIfNeeded()
-            return
-        }
-        val s = service ?: return
-        calibrateButton.isEnabled = false
-        calibration.text = "Kalibrasyon: gerçek cihaz ölçümü yapılıyor…"
-        calibrationExecutor.execute {
-            val outcome = s.calibrateHardware()
-            runOnUiThread {
-                calibration.text = when (outcome.state) {
-                    AncCalibrationSession.State.VALIDATED -> "Kalibrasyon: DOĞRULANDI • gerçek ölçüm"
-                    AncCalibrationSession.State.FAILED -> "Kalibrasyon: BAŞARISIZ • ${outcome.error ?: "ölçüm güvenilir değil"}"
-                    else -> "Kalibrasyon: ${outcome.state}"
-                }
-                calibrateButton.isEnabled = true
-                render()
-            }
-        }
-    }
-
     private fun render() {
-        val s = service
-        if (s == null) {
-            status.text = "Durum: Servis hazır değil"
-            topology.text = "Native AAudio: ${if (NativeAudioEngine.isAvailable()) "hazır" else "kullanılamıyor"}"
-            level.text = "Mikrofon seviyesi: -120 dBFS"
-            route.text = "Çıkış: -"
-            effects.text = "İşleme: bekleniyor"
-            calibration.text = "Kalibrasyon: yapılmadı"
-            startButton.isEnabled = false
-            stopButton.isEnabled = false
-            calibrateButton.isEnabled = false
-            return
-        }
-        topology.text = if (s.nativeBackendAvailable()) {
-            "Native AAudio: HAZIR • 48 kHz • 2 giriş / 1 çıkış"
-        } else {
-            "Native AAudio: KULLANILAMIYOR • güvenli bypass"
-        }
-        status.text = when {
-            s.error() != null -> "Durum: HATA — ${s.error()}"
-            s.isAncActive() -> "Durum: ANC AKTİF"
-            s.isRunning() -> "Durum: ÇALIŞIYOR • güvenli bypass"
-            else -> "Durum: Hazır"
-        }
-        level.text = "Mikrofon seviyesi: ${"%.1f".format(s.inputDbFs())} dBFS"
-        route.text = "Çıkış: ${s.routeName()}"
-        effects.text = when {
-            s.isAncActive() -> "İşleme: Native AAudio ANC • CH0 reference • CH1 error • FxLMS"
-            s.isRunning() -> "İşleme: güvenli bypass • NS=${flag(s.nsActive())} • AEC=${flag(s.aecActive())} • AGC=${flag(s.agcActive())}"
-            s.error() != null -> "İşleme: güvenli duruş • fault=${s.ancFaultCode()}"
-            else -> "İşleme: bekleniyor"
-        }
-        if (s.calibrationState() == AncCalibrationSession.State.VALIDATED) calibration.text = "Kalibrasyon: DOĞRULANDI • gerçek ölçüm"
-        startButton.isEnabled = !s.isRunning()
-        stopButton.isEnabled = s.isRunning()
-        calibrateButton.isEnabled = !s.isRunning() && !calibrationExecutor.isShutdown
-    }
-
-    private fun requestPermissionsIfNeeded() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
-            return
-        }
-        requestNotificationPermissionIfNeeded()
-    }
-
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
-        }
-    }
-
-    private fun flag(active: Boolean) = if (active) "AÇIK" else "YOK"
-    private fun label(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 16f
-        setPadding(0, dp(10), 0, dp(2))
+        val s = service ?: return
+        status.text = when { s.preparing -> "Ses yolu hazırlanıyor…"; s.error() != null -> s.error(); s.isRunning() -> "Dinleme açık • tek kulaklık"; else -> "Hazır • sağ veya sol tek kulaklık yeterli" }
+        details.text = if (s.isRunning()) "${s.routeName()}\n${s.processingName()}\nMono • ${s.sampleRate()} Hz • ${"%.1f".format(s.inputDbFs())} dBFS" else "Sağ / sol ayrımı gerekmez. Ses mono iletilir."
+        start.isEnabled = !s.preparing && s.state() !in listOf(AudioEngine.State.STARTING, AudioEngine.State.RUNNING, AudioEngine.State.STOPPING)
+        stop.isEnabled = s.preparing || s.isRunning()
     }
     private fun fullWidth() = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 }
