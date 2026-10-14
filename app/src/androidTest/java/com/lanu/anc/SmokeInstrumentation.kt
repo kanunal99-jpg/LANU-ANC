@@ -8,6 +8,7 @@ import android.widget.Button
 
 /** Android runtime smoke, using silence only. Does not claim a physical headset test. */
 class SmokeInstrumentation : Instrumentation() {
+    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
     override fun onStart() {
         val result = Bundle()
         try {

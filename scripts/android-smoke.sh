@@ -3,7 +3,7 @@ set -euo pipefail
 mkdir -p diagnostics
 adb install -r -g app/build/outputs/apk/debug/app-debug.apk
 adb install -r -g app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb shell am instrument -w -r com.lanu.anc.test/com.lanu.anc.SmokeInstrumentation | tee diagnostics/android-smoke.txt
+timeout 120 adb shell am instrument -w -r com.lanu.anc.test/com.lanu.anc.SmokeInstrumentation | tee diagnostics/android-smoke.txt
 python3 - <<'PY'
 from pathlib import Path
 text = Path('diagnostics/android-smoke.txt').read_text()

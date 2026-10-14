@@ -171,7 +171,7 @@ class AudioEngine(private val context: Context) {
         var silenceBlocks = 0
         try {
             while (keepRunning && !Thread.currentThread().isInterrupted) {
-                if (track.routedDevice?.id != expectedOutput || manager.mode == AudioManager.MODE_IN_CALL) { fail("Kulaklık ses yolu değişti veya telefon araması başladı."); break }
+                if (track.routedDevice?.id != expectedOutput || manager.mode == AudioManager.MODE_IN_CALL || (manager.mode == AudioManager.MODE_IN_COMMUNICATION && !changedMode)) { fail("Kulaklık ses yolu değişti veya bir görüşme başladı."); break }
                 val reduction = reductionEnabled
                 if (effectState != reduction) {
                     val systemEnabled = runCatching {
