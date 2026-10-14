@@ -66,7 +66,8 @@ class HardwareCalibrationController(private val context: Context) {
             if (record.state != AudioRecord.STATE_INITIALIZED || track.state != AudioTrack.STATE_INITIALIZED) return null
             record.preferredDevice = input
             track.preferredDevice = output
-            if (!routeMatches(record, input, track, output) || record.channelCount < INPUT_CHANNELS) return null
+            // routedDevice is null until capture/playback starts; validate channels here only.
+            if (record.channelCount < INPUT_CHANNELS) return null
 
             val excitation = FloatArray(EXCITATION_FRAMES)
             val excitationPcm = ShortArray(EXCITATION_FRAMES)
@@ -76,6 +77,13 @@ class HardwareCalibrationController(private val context: Context) {
             record.startRecording()
             track.play()
             if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING || track.playState != AudioTrack.PLAYSTATE_PLAYING) return null
+            // Start with silence, then verify the actual route before emitting test excitation.
+            val silence = ShortArray(BUFFER_FRAMES)
+            val deadline = android.os.SystemClock.elapsedRealtime() + 1500
+            while (!routeMatches(record, input, track, output) && android.os.SystemClock.elapsedRealtime() < deadline) {
+                if (track.write(silence, 0, silence.size, AudioTrack.WRITE_NON_BLOCKING) < 0) return null
+                Thread.sleep(20)
+            }
             if (!routeMatches(record, input, track, output)) return null
 
             val writer = Thread {

@@ -7,128 +7,87 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: single-ear-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
   ANDROID_HOME: /usr/local/lib/android/sdk
-  APK_REPO_PATH: downloads/LANU-ANC.apk
-  MANIFEST_REPO_PATH: downloads/LANU-ANC-build-manifest.txt
-  NDK_VERSION: 27.2.12479018
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Verify Android SDK
+      - name: Install build tools
         shell: bash
         run: |
           set -euo pipefail
           SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -1)"
-          test -x "$SDKMANAGER"
-          echo "Using $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;$NDK_VERSION" "cmake;3.22.1"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+          "$SDKMANAGER" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-
-      - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Run unit tests
-        run: gradle --no-daemon :app:testDebugUnitTest
-
-      - name: Compute SHA-256
-        id: sha
-        shell: bash
+      - name: Build APK and run unit tests
+        run: gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest
+      - name: Enable emulator acceleration
         run: |
-          set -euo pipefail
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
-          echo "sha256=$(sha256sum "$APK" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-
-      - name: Write build manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          SHA="${{ steps.sha.outputs.sha256 }}"
-          {
-            echo "LANU ANC Android build"
-            echo "Commit: $GITHUB_SHA"
-            echo "APK: $APK_REPO_PATH"
-            echo "SHA-256: $SHA"
-            echo "Version: 1.0.0"
-            echo "Build type: debug / installable development build"
-            echo "Physical ANC validation: requires real two-channel hardware test"
-          } > build-manifest.txt
-
-      - name: Verify APK package exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          test -s build-manifest.txt
-
-      - name: Upload APK artifact
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android runtime smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          disable-animations: true
+          script: bash scripts/android-smoke.sh
+      - name: Upload test evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lanu-anc-apk-${{ github.run_number }}
+          name: single-ear-test-evidence-${{ github.run_number }}
           path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            build-manifest.txt
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Publish APK into repository
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+            app/build/test-results/
+            diagnostics/
+          if-no-files-found: warn
+      - name: Prepare versioned APK and manifest
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$(dirname "$APK_REPO_PATH")"
-          cp app/build/outputs/apk/debug/app-debug.apk "$APK_REPO_PATH"
-          cp build-manifest.txt "$MANIFEST_REPO_PATH"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$APK_REPO_PATH" "$MANIFEST_REPO_PATH"
-          if git diff --cached --quiet; then
-            echo "No repository APK change to publish."
-            exit 0
-          fi
-          git commit -m "build: publish LANU ANC v1.0.0 APK [skip ci]"
-          git push origin HEAD:main
-
-      - name: Publish GitHub Release
+          mkdir -p release
+          cp app/build/outputs/apk/debug/app-debug.apk release/LANU-Tek-Kulaklik-1.1.0.apk
+          sha256sum release/LANU-Tek-Kulaklik-1.1.0.apk > release/SHA256SUMS.txt
+          {
+            echo "LANU Tek Kulaklik 1.1.0"
+            echo "Commit: $GITHUB_SHA"
+            echo "Build type: debug / installable development APK"
+            echo "Validation: build, unit tests, Android 35 emulator smoke"
+            echo "Physical phone/headset audio quality: not verified by CI"
+            echo "Scope: local mono microphone monitor; no cellular/WhatsApp filtering or physical ANC"
+          } > release/build-manifest.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lanu-single-ear-apk-${{ github.run_number }}
+          path: release/
+          if-no-files-found: error
+      - name: Publish versioned GitHub Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
           set -euo pipefail
-          TAG="v1.0.0"
-          TITLE="LANU ANC v1.0.0"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" \
-              "app/build/outputs/apk/debug/app-debug.apk#LANU-ANC-v1.0.0-debug.apk" \
-              "build-manifest.txt#LANU-ANC-v1.0.0-build-manifest.txt" \
-              --clobber
-          else
-            gh release create "$TAG" \
-              "app/build/outputs/apk/debug/app-debug.apk#LANU-ANC-v1.0.0-debug.apk" \
-              "build-manifest.txt#LANU-ANC-v1.0.0-build-manifest.txt" \
-              --target "$GITHUB_SHA" \
-              --title "$TITLE" \
-              --notes "LANU ANC v1.0.0 verified Android build. Commit: $GITHUB_SHA. SHA-256: ${{ steps.sha.outputs.sha256 }}. This is an installable development APK; measured physical ANC performance requires real hardware validation."
-          fi
+          gh release create v1.1.0 release/LANU-Tek-Kulaklik-1.1.0.apk release/SHA256SUMS.txt release/build-manifest.txt \
+            --target "$GITHUB_SHA" --title 'LANU Tek Kulaklık 1.1.0' \
+            --notes-file docs/SINGLE_EAR_1.1.0.md --prerelease
