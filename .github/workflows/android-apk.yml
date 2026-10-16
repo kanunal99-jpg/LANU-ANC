@@ -88,6 +88,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create v1.1.0 release/LANU-Tek-Kulaklik-1.1.0.apk release/SHA256SUMS.txt release/build-manifest.txt \
-            --target "$GITHUB_SHA" --title 'LANU Tek Kulaklık 1.1.0' \
-            --notes-file docs/SINGLE_EAR_1.1.0.md --prerelease
+          # Never overwrite a different build under the historical v1.1.0 tag.
+          # Re-running one build uploads the same files idempotently.
+          tag="v1.1.0-build.${GITHUB_RUN_NUMBER}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/LANU-Tek-Kulaklik-1.1.0.apk release/SHA256SUMS.txt release/build-manifest.txt --clobber
+          else
+            gh release create "$tag" release/LANU-Tek-Kulaklik-1.1.0.apk release/SHA256SUMS.txt release/build-manifest.txt \
+              --target "$GITHUB_SHA" --title "LANU Tek Kulaklık 1.1.0 · Build ${GITHUB_RUN_NUMBER}" \
+              --notes-file docs/SINGLE_EAR_1.1.0.md --prerelease
+          fi
+          gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq 'LANU-Tek-Kulaklik-1.1.0.apk'
