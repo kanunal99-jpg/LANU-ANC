@@ -42,8 +42,15 @@ class LatencyAligner private constructor(
             sampleRateHz: Int,
             confidence: Float
         ): LatencyAligner? {
-            val aligner = LatencyAligner(delaySamples, sampleRateHz, confidence)
-            return aligner.takeIf { it.isValid }
+            // Validate before allocating FloatArray(delaySamples + 1). Untrusted
+            // calibration data can otherwise overflow Int or exhaust memory.
+            if (delaySamples !in 0..MAX_DELAY_SAMPLES ||
+                sampleRateHz <= 0 ||
+                !confidence.isFinite() ||
+                confidence !in 0f..1f
+            ) return null
+
+            return LatencyAligner(delaySamples, sampleRateHz, confidence)
         }
     }
 }
