@@ -25,6 +25,29 @@ class LatencyAlignerTest {
         assertNull(LatencyAligner.calibrated(1, 48_000, Float.NaN))
     }
 
+    @Test fun extremeUntrustedDelayValuesReturnNullInsteadOfAllocating() {
+        assertNull(LatencyAligner.calibrated(Int.MIN_VALUE, 48_000, 1f))
+        assertNull(LatencyAligner.calibrated(Int.MAX_VALUE, 48_000, 1f))
+        assertNull(LatencyAligner.calibrated(-2, 48_000, 1f))
+        assertNull(LatencyAligner.calibrated(4097, 48_000, 1f))
+    }
+
+    @Test fun badSampleRateAndConfidenceAreRejectedBeforeAllocating() {
+        assertNull(LatencyAligner.calibrated(4096, Int.MIN_VALUE, 1f))
+        assertNull(LatencyAligner.calibrated(4096, 48_000, Float.POSITIVE_INFINITY))
+        assertNull(LatencyAligner.calibrated(4096, 48_000, Float.NEGATIVE_INFINITY))
+        assertNull(LatencyAligner.calibrated(4096, 48_000, Float.NaN))
+        assertNull(LatencyAligner.calibrated(4096, 48_000, -0.01f))
+        assertNull(LatencyAligner.calibrated(4096, 48_000, 1.01f))
+    }
+
+    @Test fun maximumSafeDelayRemainsOperational() {
+        val aligner = LatencyAligner.calibrated(LatencyAligner.MAX_DELAY_SAMPLES, 48_000, 0.8f)
+        assertNotNull(aligner)
+        assertTrue(aligner!!.isValid)
+        assertEquals(0f, aligner.align(1f), 0f)
+    }
+
     @Test fun resetClearsDelayHistory() {
         val aligner = LatencyAligner.calibrated(2, 48_000, 1f)!!
         aligner.align(10f)
